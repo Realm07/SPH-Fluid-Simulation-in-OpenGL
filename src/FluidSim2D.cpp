@@ -15,31 +15,31 @@
 #include <cmath>
 
 #ifndef M_PI
-#define M_PI 3.15
+#define M_PI 3.14
 #endif
-
+GLfloat twicePi = 2.0f * M_PI;
 constexpr auto SCREEN_WIDTH = 1280;
 constexpr auto SCREEN_HEIGHT = 720;
 
-int rows = 15;
+int rows = 20;
 int cols = rows;
-int radius = 4;
+int radius = 5;
 int spacingX = 11;
 int spacingY = spacingX;
-float width = SCREEN_WIDTH / 2.0 - (((cols + 1.0) * spacingX) / 2.0);
-float height = SCREEN_HEIGHT / 2.0 - (((cols + 1.0) * spacingX) / 2.0);
-static float smoothingRadius = 50.0f;
-float targetDensity = 0.0001f;
-float pressureMultiplier = 0.01f;
-static float gravity = 0.000f;
-float dampingFactor = 0.6;
-float multiplicativeFactor = 1.0f;
-bool show_directional_lines = false;
-int nbFrames = 0;
-double lastTime = glfwGetTime();
-int iterations = 0;
+float smoothingRadius = 200.0f;
+float gravity = 0.000f;
+float dampingFactor = 0.6f;
+float targetDensity = 0.00024f;
+float pressureMultiplier = 2.80f;
+float stiffnessConstant = 1.0f;
 float boundsSizeX = SCREEN_WIDTH;
 float boundsSizeY = SCREEN_HEIGHT;
+float width = SCREEN_WIDTH / 2.0 - (((cols + 1.0) * spacingX) / 2.0);
+float height = SCREEN_HEIGHT / 2.0 - (((cols + 1.0) * spacingX) / 2.0);
+bool show_smoothing_radius = false;
+bool show_directional_lines = false;
+bool show_density_areas = false;
+GLint numberOfSides = 64;
 
 std::mt19937 mt{ std::random_device{}() };
 std::uniform_real_distribution<float> distX(0.0f, SCREEN_WIDTH);
@@ -105,7 +105,7 @@ static float SmoothingKernel(float radius, float dst)
     {
         float volume = (M_PI * pow(radius, 4)) / 6;
         float result = ((radius - dst) * (radius - dst) / volume);
-        //clamp
+        
         return (result >= 0.0f) ? result : 0.0f;
 
     }
@@ -125,6 +125,7 @@ static void glfw_error_callback(int error, const char* description)
 {
     fprintf(stderr, "GLFW Error %d: %s\n", error, description);
 }
+std::vector<Vector2> velocities;
 
 class Ball {
 public:
@@ -171,13 +172,13 @@ public:
     }
 
     void draw() const {
-        drawCircle(x, y, 0, radius, 64);
+        drawCircle(x, y, 0, radius);
     }
 
 public:
-    void drawCircle(GLfloat x, GLfloat y, GLfloat z, GLfloat radius, GLint numberOfSides) const {
-        GLfloat twicePi = 2.0f * M_PI;
-
+    void drawCircle(GLfloat x, GLfloat y, GLfloat z, GLfloat radius) const {
+        //GLfloat twicePi = 2.0f * M_PI;
+        
         GLfloat* allCircleVertices = new GLfloat[(numberOfSides + 2) * 3];
         allCircleVertices[0] = x;
         allCircleVertices[1] = y;
@@ -250,8 +251,14 @@ static float ConvertDensityToPressure(float density)
     float densityError = density - targetDensity;
     float pressure = densityError * pressureMultiplier;
     return pressure;
+    
 }
+static float CalculateDensityError(float density)
+{
+    float densityError = density - targetDensity;
+    return densityError;
 
+}
 float CalculateSharedPressure(float densityA, float densityB)
 {
     float pressureA = ConvertDensityToPressure(densityA);
@@ -271,23 +278,24 @@ static Vector2 CalculatePressureForce(int particleIndex, const std::vector<Vecto
     Vector2 pressureForce = Vector2::Zero();
     Vector2 particlePosition = positions[particleIndex];
     float particleDensity = densities[particleIndex];
+    float mass = 1.0;
 
-#pragma omp parallel for reduction(+:pressureForce)
     for (int otherParticleIndex = 0; otherParticleIndex < positions.size(); otherParticleIndex++)
     {
         if (particleIndex == otherParticleIndex) continue;
 
-        Vector2 offset = positions[otherParticleIndex] - particlePosition;
+        Vector2 offset = positions[otherParticleIndex] - positions[particleIndex];
         float dst = offset.magnitude();
 
         if (dst > smoothingRadius) continue;
 
-        Vector2 dir = (dst == 0) ? randomDir : offset / dst;
+        Vector2 dir = (dst == 0) ? getRandomDir() : offset / dst;
         float slope = SmoothingKernelDerivative(dst, smoothingRadius);
         float density = densities[otherParticleIndex];
         float sharedPressure = CalculateSharedPressure(density, particleDensity);
-        Vector2 scaledDir = dir * sharedPressure;
-        pressureForce += scaledDir * slope / density;
+        //float sharedPressure = ConvertDensityToPressure(density);
+        //Vector2 scaledDir = dir * sharedPressure;
+        pressureForce += dir * sharedPressure * slope * mass / density;
 
         if (show_directional_lines == true) 
         {
@@ -335,6 +343,46 @@ void updateBallPositions(float spacingX, float spacingY, int rows, int cols, int
     balls.clear();
     initializeBalls(spacingX, spacingY, rows, cols, radius, width, height, balls);
 }
+void resetSimulation(std::vector<Ball>& balls) {
+    balls.clear();
+    for (int i = 0; i < rows; ++i)
+    {
+        for (int j = 0; j < cols; ++j) {
+            float x = distX(mt);
+            float y = distY(mt);
+            balls.emplace_back(x, y, 0.0, 0.0, radius);
+        }
+    }
+}
+
+std::vector<Ball> balls;
+void drawDensityAreas(const std::vector<float>& densities, float targetDensity) {
+    glBegin(GL_QUADS);
+    for (int i = 0; i < densities.size(); ++i) {
+        float densityError = densities[i] - targetDensity;
+        if (densityError > 0.0001) {
+            glColor3f(1.0f, 0.0f, 0.0f); // Red, positive
+        }
+        else if (densityError < -0.0001) {
+            glColor3f(0.0f, 0.0f, 1.0f); // Blue, negative
+        }
+        else {
+            glColor3f(1.0f, 1.0f, 1.0f); // White
+        }
+
+        // Calculate the coordinates for the quad based on ball position and radius
+        float x = balls[i].x;
+        float y = balls[i].y;
+        float radius = balls[i].radius;
+        glVertex2f(x - radius, y - radius);
+        glVertex2f(x + radius, y - radius);
+        glVertex2f(x + radius, y + radius);
+        glVertex2f(x - radius, y + radius);
+    }
+    glEnd();
+}
+
+
 
 int main(void)
 {
@@ -377,10 +425,9 @@ int main(void)
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
-    bool show_smoothing_radius = false;
-
+    
     glfwSwapInterval(1);
-    std::vector<Ball> balls;
+    
     for (int i = 0; i < rows; ++i)
     {
         for (int j = 0; j < cols; ++j) {
@@ -399,41 +446,49 @@ int main(void)
     }*/
     std::cout << "Entering window loop" << std::endl;
     
-    
+    int frameCounter = 0;
     while (!glfwWindowShouldClose(window))
     {
         glClear(GL_COLOR_BUFFER_BIT);
-
         std::vector<float> densities;
         std::vector<Vector2> positions;
+        
+        
         positions.reserve(balls.size());
-      
-        #pragma omp parallel for
         for (auto& ball : balls) {
-           
+            
+            ball.draw();
+        }
+        for (auto& ball : balls) {
             ball.applyGravity(gravity);
+        }
+        for (auto& ball : balls) {
             positions.push_back(Vector2(ball.x, ball.y));
         }
-
         
         float density = CalculateDensity(positions, smoothingRadius);
         densities.resize(positions.size());
 
         PreCalculateDensities(densities, positions, smoothingRadius);
 
-        #pragma omp parallel for
-        for (int i = 0; i < balls.size(); ++i) {
+        for (int i = 0; i < positions.size(); ++i) {
             Vector2 pressureForce = CalculatePressureForce(i, positions, densities, smoothingRadius);
             Vector2 pressureAcceleration = pressureForce / densities[i];
-            balls[i].vx += pressureAcceleration.X * multiplicativeFactor;
-            balls[i].vy += pressureAcceleration.Y * multiplicativeFactor;
+            balls[i].vx += pressureAcceleration.X * stiffnessConstant;
+            balls[i].vy += pressureAcceleration.Y * stiffnessConstant;
         }
-
+       /* frameCounter++;
+        if (frameCounter % 120 == 0) {
+            for (int i = 0; i < balls.size(); ++i) {
+                float densityError = CalculateDensityError(densities[i]);
+                std::cout << std::fixed << std::setprecision(8) << densityError << std::endl;
+            }
+        }*/
         for (auto& ball : balls) {
             ball.updatePosition();
             ball.resolveCollision(boundsSizeX, boundsSizeY);
-            ball.draw();
         }
+        
         
         //width = SCREEN_WIDTH / 2 - (((cols + 1) * spacingX) / 2);
         //height = SCREEN_HEIGHT / 2 - (((cols + 1) * spacingY) / 2);
@@ -449,14 +504,16 @@ int main(void)
             ImGui::SliderInt("Ball Radius", &ballRadius, 1, 70);
             ImGui::Text("Density: %.8f", density);
             ImGui::SliderFloat("Smoothing Radius", &smoothingRadius, 0.05f, 500.0f);
-            ImGui::SliderInt("Spacing X", &spacingX, 0.0, 150.0);
+            //ImGui::SliderInt("Spacing X", &spacingX, 0.0, 150.0);
             ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
             ImGui::SliderFloat("Pressure Multiplier", &pressureMultiplier, 0.01f, 100.0f);
             //ImGui::SliderFloat("Multiplicative Factor", &multiplicativeFactor, 1.0f, 100.0f);
-            //ImGui::SliderFloat("Target Density", &targetDensity, 0.0000001f, 1.0f);
+            ImGui::SliderFloat("Target Density", &targetDensity, 0.000001f, 0.001f, "%.8f");
+            ImGui::SliderFloat("Stiffness Constant", &stiffnessConstant, 0.1f, 1.0f);
             ImGui::Checkbox("Show Smoothing Radius", &show_smoothing_radius);
             ImGui::SameLine();
             ImGui::Checkbox("Show Directional Lines", &show_directional_lines);
+            ImGui::Checkbox("Show Density Areas", &show_density_areas);
             ImGui::End();
 
             if (radius != ballRadius) {
@@ -470,18 +527,22 @@ int main(void)
             {
                 spacingY = spacingX;
             }
-        }
-        if (show_smoothing_radius)
-        {
-            for (const auto& pos : positions) {
-                drawBounds(pos, smoothingRadius);
+            if (show_smoothing_radius) {
+                for (const auto& pos : positions) {
+                    drawBounds(pos, smoothingRadius);
+                }
             }
+            if (show_directional_lines) {
+                show_directional_lines = true;
 
+            }
+            if (show_density_areas) {
+                drawDensityAreas(densities, targetDensity);
+                show_density_areas = true;
+            }
         }
-        if (show_directional_lines)
-        {
-            show_directional_lines = true;
-            
+        if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) {
+            resetSimulation(balls);
         }
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
