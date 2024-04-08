@@ -22,8 +22,8 @@
 #define M_PI 3.14
 #endif
 GLfloat twicePi = 2.0f * M_PI;
-constexpr auto SCREEN_WIDTH = 1280;
-constexpr auto SCREEN_HEIGHT = 720;
+constexpr auto SCREEN_WIDTH = 1800;
+constexpr auto SCREEN_HEIGHT = 900;
 
 int rows = 20;
 int cols = rows;
