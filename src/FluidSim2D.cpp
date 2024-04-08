@@ -11,8 +11,12 @@
 #include <omp.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
-#define GL_SILENCE_DEPRECATION
 #include <cmath>
+#include <tuple>
+#include <algorithm>
+#include <limits>
+#include <utility>
+#include <cstdint>
 
 #ifndef M_PI
 #define M_PI 3.14
@@ -23,13 +27,13 @@ constexpr auto SCREEN_HEIGHT = 720;
 
 int rows = 20;
 int cols = rows;
-int radius = 5;
+int radius = 4;
 int spacingX = 11;
 int spacingY = spacingX;
-float smoothingRadius = 200.0f;
+float smoothingRadius = 66.0f;
 float gravity = 0.000f;
-float dampingFactor = 0.6f;
-float targetDensity = 0.00024f;
+float dampingFactor = 0.8f;
+float targetDensity = 0.0003f;
 float pressureMultiplier = 2.80f;
 float stiffnessConstant = 1.0f;
 float boundsSizeX = SCREEN_WIDTH;
@@ -40,7 +44,6 @@ bool show_smoothing_radius = false;
 bool show_directional_lines = false;
 bool show_density_areas = false;
 GLint numberOfSides = 64;
-
 std::mt19937 mt{ std::random_device{}() };
 std::uniform_real_distribution<float> distX(0.0f, SCREEN_WIDTH);
 std::uniform_real_distribution<float> distY(0.0f, SCREEN_HEIGHT);
@@ -90,6 +93,16 @@ public:
     static Vector2 Zero() {
         return Vector2(0.0f, 0.0f);
     }
+    void normalize() {
+        float mag = magnitude();
+        if (mag != 0) {
+            X /= mag;
+            Y /= mag;
+        }
+    }
+    static Vector2 down() {
+        return Vector2(0.0f, -1.0f);
+    }
 };
 
 static float Sign(float value) {
@@ -129,16 +142,15 @@ std::vector<Vector2> velocities;
 
 class Ball {
 public:
-    float x;
-    float y;
-    float vx;
-    float vy;
+    Vector2 position;
+    Vector2 velocity;
     float radius;
-    
-    Ball(float x, float y, float vx, float vy, float radius) : x(x), y(y), vx(vx), vy(vy), radius(radius) {}
+
+    Ball(const Vector2& position, const Vector2& velocity, float radius)
+        : position(position), velocity(velocity), radius(radius) {}
 
     void applyGravity(float gravity) {
-        vy -= gravity;
+        velocity.Y -= gravity;
     }
 
     void resolveCollision(float boundsSizeX, float boundsSizeY) {
@@ -147,32 +159,30 @@ public:
         float minY = radius;
         float maxY = boundsSizeY - radius;
 
-        if (x < minX) {
-            x = minX;
-            vx *= -dampingFactor;
+        if (position.X < minX) {
+            position.X = minX;
+            velocity.X *= -dampingFactor;
         }
-        else if (x > maxX) {
-            x = maxX;
-            vx *= -dampingFactor;
+        else if (position.X > maxX) {
+            position.X = maxX;
+            velocity.X *= -dampingFactor;
         }
 
-        if (y < minY) {
-            y = minY;
-            vy *= -dampingFactor;
+        if (position.Y < minY) {
+            position.Y = minY;
+            velocity.Y *= -dampingFactor;
         }
-        else if (y > maxY) {
-            y = maxY;
-            vy *= -dampingFactor;
+        else if (position.Y > maxY) {
+            position.Y = maxY;
+            velocity.Y *= -dampingFactor;
         }
     }
 
     void updatePosition() {
-        x += vx;
-        y += vy;
+        position += velocity;
     }
-
     void draw() const {
-        drawCircle(x, y, 0, radius);
+        drawCircle(position.X, position.Y, 0, radius);
     }
 
 public:
@@ -200,6 +210,33 @@ public:
         delete[] allCircleVertices;
     }
 };
+
+void resolveCollisions(std::vector<Vector2>& positions, std::vector<Vector2>& velocities, float radius, float dampingFactor, float boundsSizeX, float boundsSizeY) {
+    for (int i = 0; i < positions.size(); i++) {
+        float minX = radius;
+        float maxX = boundsSizeX - radius;
+        float minY = radius;
+        float maxY = boundsSizeY - radius;
+
+        if (positions[i].X < minX) {
+            positions[i].X = minX;
+            velocities[i].X *= -dampingFactor;
+        }
+        else if (positions[i].X > maxX) {
+            positions[i].X = maxX;
+            velocities[i].X *= -dampingFactor;
+        }
+
+        if (positions[i].Y < minY) {
+            positions[i].Y = minY;
+            velocities[i].Y *= -dampingFactor;
+        }
+        else if (positions[i].Y > maxY) {
+            positions[i].Y = maxY;
+            velocities[i].Y *= -dampingFactor;
+        }
+    }
+}
 
 static void drawRadius(float x, float y, float z, float radius, int numSegments) {
     glBegin(GL_LINE_LOOP);
@@ -248,10 +285,7 @@ void PreCalculateDensities(std::vector<float>& densities, const std::vector<Vect
 
 static float ConvertDensityToPressure(float density)
 {
-    float densityError = density - targetDensity;
-    float pressure = densityError * pressureMultiplier;
-    return pressure;
-    
+    return (density - targetDensity) * pressureMultiplier;
 }
 static float CalculateDensityError(float density)
 {
@@ -265,20 +299,17 @@ float CalculateSharedPressure(float densityA, float densityB)
     float pressureB = ConvertDensityToPressure(densityB);
     return (pressureA + pressureB) / 2;
 };
-
 static Vector2 getRandomDir() {
     float angle = static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * 2.0f * M_PI;
     return Vector2(cos(angle), sin(angle));
 }
-
 Vector2 randomDir = getRandomDir();
-
 static Vector2 CalculatePressureForce(int particleIndex, const std::vector<Vector2>& positions, const std::vector<float>& densities, float smoothingRadius)
 {
     Vector2 pressureForce = Vector2::Zero();
-    Vector2 particlePosition = positions[particleIndex];
-    float particleDensity = densities[particleIndex];
-    float mass = 1.0;
+    //Vector2 particlePosition = positions[particleIndex];
+    //float particleDensity = densities[particleIndex];
+    float mass = 1.0f;
 
     for (int otherParticleIndex = 0; otherParticleIndex < positions.size(); otherParticleIndex++)
     {
@@ -292,7 +323,7 @@ static Vector2 CalculatePressureForce(int particleIndex, const std::vector<Vecto
         Vector2 dir = (dst == 0) ? getRandomDir() : offset / dst;
         float slope = SmoothingKernelDerivative(dst, smoothingRadius);
         float density = densities[otherParticleIndex];
-        float sharedPressure = CalculateSharedPressure(density, particleDensity);
+        float sharedPressure = CalculateSharedPressure(density, densities[particleIndex]);
         //float sharedPressure = ConvertDensityToPressure(density);
         //Vector2 scaledDir = dir * sharedPressure;
         pressureForce += dir * sharedPressure * slope * mass / density;
@@ -301,7 +332,7 @@ static Vector2 CalculatePressureForce(int particleIndex, const std::vector<Vecto
         {
             glBegin(GL_LINES);
             glColor3f(1.0f, 0.0f, 1.0f); 
-            glVertex2f(particlePosition.X, particlePosition.Y);
+            glVertex2f(positions[particleIndex].X, positions[particleIndex].Y);
             glVertex2f(positions[otherParticleIndex].X, positions[otherParticleIndex].Y);
             glEnd();
         }
@@ -328,30 +359,38 @@ float CalculateDensity(const std::vector<Vector2>& positions, float smoothingRad
     return density;
 }
 
-void initializeBalls(float spacingX, float spacingY, int rows, int cols, int radius, float width, float height, std::vector<Ball>& balls) {
+//void initializeBalls(float spacingX, float spacingY, int rows, int cols, int radius, float width, float height, std::vector<Ball>& balls) {
+//    balls.clear();
+//    for (int i = 0; i < rows; ++i) {
+//        for (int j = 0; j < cols; ++j) {
+//            float x = (j + 1) * spacingX;
+//            float y = (i + 1) * spacingY;
+//            balls.emplace_back(width + x, height + y, 0.0, 0.0, radius);
+//        }
+//    }
+//}
+
+//void updateBallPositions(float spacingX, float spacingY, int rows, int cols, int radius, float width, float height, std::vector<Ball>& balls) {
+//    balls.clear();
+//    initializeBalls(spacingX, spacingY, rows, cols, radius, width, height, balls);
+//}
+void resetSimulation(std::vector<Vector2>& positions, std::vector<Vector2>& velocities, std::vector<Ball>& balls, int rows, int cols) {
+    positions.clear();
+    velocities.clear();
     balls.clear();
+    positions.reserve(rows * cols);
+    velocities.reserve(rows * cols);
+    balls.reserve(rows * cols);
+
     for (int i = 0; i < rows; ++i) {
         for (int j = 0; j < cols; ++j) {
-            float x = (j + 1) * spacingX;
-            float y = (i + 1) * spacingY;
-            balls.emplace_back(width + x, height + y, 0.0, 0.0, radius);
+            positions.emplace_back(distX(mt), distY(mt));
+            velocities.emplace_back(Vector2::Zero());
         }
     }
-}
 
-void updateBallPositions(float spacingX, float spacingY, int rows, int cols, int radius, float width, float height, std::vector<Ball>& balls) {
-    balls.clear();
-    initializeBalls(spacingX, spacingY, rows, cols, radius, width, height, balls);
-}
-void resetSimulation(std::vector<Ball>& balls) {
-    balls.clear();
-    for (int i = 0; i < rows; ++i)
-    {
-        for (int j = 0; j < cols; ++j) {
-            float x = distX(mt);
-            float y = distY(mt);
-            balls.emplace_back(x, y, 0.0, 0.0, radius);
-        }
+    for (size_t i = 0; i < positions.size(); ++i) {
+        balls.emplace_back(positions[i], velocities[i], radius);
     }
 }
 
@@ -371,19 +410,173 @@ void drawDensityAreas(const std::vector<float>& densities, float targetDensity) 
         }
 
         // Calculate the coordinates for the quad based on ball position and radius
-        float x = balls[i].x;
-        float y = balls[i].y;
+        const Vector2& position = balls[i].position;
         float radius = balls[i].radius;
-        glVertex2f(x - radius, y - radius);
-        glVertex2f(x + radius, y - radius);
-        glVertex2f(x + radius, y + radius);
-        glVertex2f(x - radius, y + radius);
+        glVertex2f(position.X - radius, position.Y - radius);
+        glVertex2f(position.X + radius, position.Y - radius);
+        glVertex2f(position.X + radius, position.Y + radius);
+        glVertex2f(position.X - radius, position.Y + radius);
     }
     glEnd();
 }
 
+Vector2 CalculateDensityGradient(const std::vector<Vector2>& positions, float smoothingRadius, int index) {
+    const float mass = 1;
+    const float epsilon = 1e-6f; // Small value to prevent division by zero
 
+    Vector2 gradient(0.0f, 0.0f);
+    Vector2 position = positions[index];
 
+    for (const auto& p : positions) {
+        Vector2 offset = p - position;
+        float dst = offset.magnitude();
+
+        if (dst < epsilon || dst > smoothingRadius) continue;
+
+        float influence = SmoothingKernel(smoothingRadius, dst);
+        Vector2 partialGradient = offset * (mass * influence / (dst + epsilon)); // Avoid division by zero
+        gradient += partialGradient;
+    }
+
+    gradient.normalize(); // Normalize the final gradient vector
+    return gradient;
+}
+
+void DrawDensityGradients(const std::vector<Vector2>& positions, float smoothingRadius) {
+    const float arrowLengthFactor = 20.0f; // Adjust this factor for arrow length
+    const float arrowHeadSize = 2.0f; // Adjust this size for arrow head
+
+    for (int i = 0; i < positions.size(); ++i) {
+        Vector2 gradient = CalculateDensityGradient(positions, smoothingRadius, i);
+
+        // Calculate arrow length based on density gradient magnitude
+        float arrowLength = gradient.magnitude() * arrowLengthFactor;
+
+        // Draw the arrow with increased thickness
+        glLineWidth(2.0f);
+        glBegin(GL_LINES);
+        glVertex2f(positions[i].X, positions[i].Y);
+        glVertex2f(positions[i].X + gradient.X * arrowLength, positions[i].Y + gradient.Y * arrowLength);
+        glEnd();
+        glLineWidth(1.0f); // Reset line width
+
+        // Calculate arrowhead vertices
+        // Calculate arrowhead vertices
+        Vector2 arrowEnd = positions[i] + gradient * arrowLength;
+        // Calculate the magnitude of the gradient vector
+        float gradientMag = sqrt(gradient.X * gradient.X + gradient.Y * gradient.Y);
+
+        // Calculate the normalized gradient vector components
+        float normalizedX = gradient.X / gradientMag;
+        float normalizedY = gradient.Y / gradientMag;
+
+        // Create the normalized gradient vector
+        Vector2 arrowDir(normalizedX, normalizedY);
+
+        Vector2 arrowHead1 = arrowEnd + Vector2(-arrowDir.Y, arrowDir.X) * arrowHeadSize; // Rotate by 90 degrees
+        Vector2 arrowHead2 = arrowEnd + Vector2(arrowDir.Y, -arrowDir.X) * arrowHeadSize; // Rotate by -90 degrees
+
+        // Draw arrow head
+        glBegin(GL_TRIANGLES);
+        glVertex2f(arrowEnd.X, arrowEnd.Y);
+        glVertex2f(arrowHead1.X, arrowHead1.Y);
+        glVertex2f(arrowHead2.X, arrowHead2.Y);
+        glEnd();
+
+    }
+}
+
+//Spatial Grid
+//Convert a position to the coordinate of the cell it is within
+std::tuple<int, int> PositionToCellCoord(Vector2 point, float radius) {
+    int cellX = static_cast<int>(point.X / radius);
+    int cellY = static_cast<int>(point.Y / radius);
+    return std::make_tuple(cellX, cellY);
+}
+
+// Convert a cell coordinate into a single number.
+unsigned int HashCell(int cellX, int cellY) {
+    unsigned int a = static_cast<unsigned int>(cellX) * 15823u;
+    unsigned int b = static_cast<unsigned int>(cellY) * 9737333u;
+    return a + b;
+}
+
+// wrap the hash value around the length of the array (so it can be used as an index)
+unsigned int GetKeyFromHash(unsigned int hash, size_t spatialLookupLength) {
+    return hash % spatialLookupLength;
+}
+
+struct Entry {
+    int index;
+    uint32_t cellKey;
+
+    Entry(int index, uint32_t cellKey) : index(index), cellKey(cellKey) {}
+};
+
+//void UpdateSpatialLookup(const std::vector<std::pair<float, float>>& points, float radius, std::vector<Entry>& spatialLookup, std::vector<int>& startIndices) {
+//    // Create (unordered) spatial lookup
+//    spatialLookup.resize(points.size());
+//    startIndices.resize(points.size(), std::numeric_limits<int>::max());
+//    size_t spatialLookupLength = spatialLookup.size();
+//
+//    for (size_t i = 0; i < points.size(); ++i) {
+//        int cellX, cellY;
+//        std::tie(cellX, cellY) = PositionToCellCoord({ points[i].first, points[i].second }, radius);
+//        uint32_t cellKey = HashCell(cellX, cellY);
+//        spatialLookup[i] = Entry(static_cast<int>(i), cellKey);
+//    }
+//
+//    std::sort(spatialLookup.begin(), spatialLookup.end(), [](const Entry& a, const Entry& b) {
+//        return a.cellKey < b.cellKey;
+//        });
+//
+//    // Calculate start indices of each unique cell key in the spatial lookup
+//    for (size_t i = 0; i < points.size(); ++i) {
+//        uint32_t key = spatialLookup[i].cellKey;
+//        uint32_t keyPrev = i == 0 ? std::numeric_limits<uint32_t>::max() : spatialLookup[i - 1].cellKey;
+//
+//        if (key != keyPrev) {
+//            startIndices[key] = static_cast<int>(i);
+//        }
+//    }
+//}
+
+//void ForEachPointWithinRadius(const std::pair<float, float>& samplePoint, float radius, const std::vector<Entry>& spatialLookup, const std::vector<int>& startIndices, const std::vector<std::pair<float, float>>& points) {
+//    // Find which cell the sample point is in (this will be the center of our 3x3 block)
+//    auto [centerX, centerY] = PositionToCellCoord(samplePoint, radius);
+//    float sqrRadius = radius * radius;
+//
+//    // cellOffsets array
+//    std::array<std::pair<int, int>, 9> cellOffsets = { {
+//        {-1, -1}, {0, -1}, {1, -1},
+//        {-1,  0}, {0,  0}, {1,  0},
+//        {-1,  1}, {0,  1}, {1,  1}
+//    } };
+//
+//    // Loop over all cells of the 3x3 block around the cell
+//    for (const auto& [offsetX, offsetY] : cellOffsets) {
+//        // Get key of current cell, then loop over all points that share that key
+//        uint32_t key = GetKeyFromHash(HashCell(centerX + offsetX, centerY + offsetY));
+//        int cellStartIndex = startIndices[key];
+//
+//        for (size_t i = cellStartIndex; i < spatialLookup.size(); ++i) {
+//            // Exit loop if we're no longer looking at the correct cell
+//            if (spatialLookup[i].cellKey != key) break;
+//
+//            int particleIndex = spatialLookup[i].index;
+//            float dx = points[particleIndex].first - samplePoint.first;
+//            float dy = points[particleIndex].second - samplePoint.second;
+//            float sqrDst = dx * dx + dy * dy;
+//
+//            // Test if the point is inside the radius
+//            if (sqrDst <= sqrRadius) {
+//                // Do something with the particleIndex!
+//                // Either by writing code that uses it directly or by
+//                // having this function take in a callback, or return an IEnumerable, etc.
+//            }
+//        }
+//    }
+//}
 int main(void)
 {
 
@@ -426,15 +619,19 @@ int main(void)
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
     
-    glfwSwapInterval(1);
-    
-    for (int i = 0; i < rows; ++i)
-    {
+    //glfwSwapInterval(1);
+    std::vector<Vector2> positions;
+    positions.reserve(rows * cols); 
+    std::vector<Vector2> velocities(rows * cols, Vector2(0.0, 0.0));
+
+    for (int i = 0; i < rows; ++i) {
         for (int j = 0; j < cols; ++j) {
-            float x = distX(mt);
-            float y = distY(mt);
-            balls.emplace_back(x, y, 0.0, 0.0, radius);
+            positions.emplace_back(distX(mt), distY(mt));
         }
+    }
+    balls.reserve(rows * cols);
+    for (size_t i = 0; i < positions.size(); ++i) {
+        balls.emplace_back(positions[i], velocities[i], radius);
     }
 
     /*for (int i = 0; i < rows; ++i) {
@@ -445,62 +642,57 @@ int main(void)
         }
     }*/
     std::cout << "Entering window loop" << std::endl;
-    
-    int frameCounter = 0;
+    std::vector<float> densities;
+    positions.reserve(balls.size());
+    densities.reserve(balls.size());
+    float lastFrame = 0.0f;
     while (!glfwWindowShouldClose(window))
     {
         glClear(GL_COLOR_BUFFER_BIT);
-        std::vector<float> densities;
-        std::vector<Vector2> positions;
+
+        float currentFrame = glfwGetTime();
         
-        
-        positions.reserve(balls.size());
-        for (auto& ball : balls) {
-            
-            ball.draw();
+        float deltaTime = currentFrame - lastFrame;
+        lastFrame = currentFrame;
+
+        for (int i = 0; i < balls.size(); i++) {
+            velocities[i] += Vector2::down() * gravity;
+            //predictedositions[i] = positions[i] * velocities[i];
         }
-        for (auto& ball : balls) {
-            ball.applyGravity(gravity);
-        }
-        for (auto& ball : balls) {
-            positions.push_back(Vector2(ball.x, ball.y));
-        }
-        
+
         float density = CalculateDensity(positions, smoothingRadius);
         densities.resize(positions.size());
-
         PreCalculateDensities(densities, positions, smoothingRadius);
 
         for (int i = 0; i < positions.size(); ++i) {
             Vector2 pressureForce = CalculatePressureForce(i, positions, densities, smoothingRadius);
             Vector2 pressureAcceleration = pressureForce / densities[i];
-            balls[i].vx += pressureAcceleration.X * stiffnessConstant;
-            balls[i].vy += pressureAcceleration.Y * stiffnessConstant;
+            velocities[i] += pressureAcceleration * stiffnessConstant;
         }
-       /* frameCounter++;
-        if (frameCounter % 120 == 0) {
-            for (int i = 0; i < balls.size(); ++i) {
-                float densityError = CalculateDensityError(densities[i]);
-                std::cout << std::fixed << std::setprecision(8) << densityError << std::endl;
-            }
-        }*/
+
+        for (int i = 0; i < balls.size(); i++) {
+            positions[i] += velocities[i];
+            balls[i].position = positions[i];
+        }
+        resolveCollisions(positions, velocities, radius, dampingFactor, boundsSizeX, boundsSizeY);
+
         for (auto& ball : balls) {
-            ball.updatePosition();
-            ball.resolveCollision(boundsSizeX, boundsSizeY);
+            ball.draw();
         }
-        
-        
+
+        //DrawDensityGradients(positions, smoothingRadius);
+
+        //std::cout << deltaTime << std::endl;
         //width = SCREEN_WIDTH / 2 - (((cols + 1) * spacingX) / 2);
         //height = SCREEN_HEIGHT / 2 - (((cols + 1) * spacingY) / 2);
         //updateBallPositions(spacingX, spacingY, rows, cols, radius, width, height, balls);
-        
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         {
             static int ballRadius = radius;
             ImGui::Begin("Config");
-            ImGui::SliderFloat("Gravity", &gravity, 0.0000f, 0.10f);
+            ImGui::SliderFloat("Gravity", &gravity, -0.01f, 0.01f);
             ImGui::SliderInt("Ball Radius", &ballRadius, 1, 70);
             ImGui::Text("Density: %.8f", density);
             ImGui::SliderFloat("Smoothing Radius", &smoothingRadius, 0.05f, 500.0f);
@@ -542,7 +734,7 @@ int main(void)
             }
         }
         if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) {
-            resetSimulation(balls);
+            resetSimulation(positions, velocities, balls, rows, cols);
         }
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -564,18 +756,3 @@ static void drawLine(float x1, float y1, float x2, float y2) {
     glVertex2f(x2, y2);
     glEnd();
 }
-//void drawBounds(Vector2 size) {
-//    float halfWidth = size.X / 2;
-//    float halfHeight = size.Y / 2;
-//
-//    float left = SCREEN_WIDTH / 2 - halfWidth;
-//    float right = SCREEN_WIDTH / 2 + halfWidth;
-//    float top = SCREEN_HEIGHT / 2 + halfHeight;
-//    float bottom = SCREEN_HEIGHT / 2 - halfHeight;
-//
-//    glColor3f(1.0f, 1.0f, 1.0f); // White color
-//    drawLine(left, top, right, top);
-//    drawLine(right, top, right, bottom);
-//    drawLine(right, bottom, left, bottom);
-//    drawLine(left, bottom, left, top);
-//}

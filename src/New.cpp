@@ -1,312 +1,294 @@
-#include <GL/glew.h>
-#include <GLFW/glfw3.h>
-#include <iostream>
-#include <cmath>
+#include <tuple>
+#include <algorithm>
+#include <limits>
+#include <utility>
+#include <cstdint>
+
+//convert a position to the coordinate of the cell it is within
+public (int x, int y) PositionToCellCoord(Vector2 point, float radius)
+{
+	int cellX = (int)(point.X / radius);
+	int cellY = (int)(point.y / radius);
+	return (cellX, cellY);
+}
+
+
+//convert a position to the coordinate of the cell it is within
+std::tuple<int, int> PositionToCellCoord(Vector2 point, float radius) {
+	int cellX = static_cast<int>(point.X / radius);
+	int cellY = static_cast<int>(point.Y / radius);
+	return std::make_tuple(cellX, cellY);
+}
+
+
+
+
+
+
+//Convert a cell coordinate into a single number.
+public uint HashCell(int cellX, int cellY)
+{
+	uint a = (uint)cellX * 15823;
+	uint b = (uint)cellY * 9737333;
+	return a + b;
+}
+
+unsigned int HashCell(int cellX, int cellY) {
+	unsigned int a = static_cast<unsigned int>(cellX) * 15823u;
+	unsigned int b = static_cast<unsigned int>(cellY) * 9737333u;
+	return a + b;
+}
+
+
+
+
+
+//wrap the hash value around the length of the array (so it can be used as an index)
+public uint GetKeyFromHash(uint hash)
+{
+	return hash % (uint)spatialLookup.Length;
+}
+
+unsigned int GetKeyFromHash(unsigned int hash) {
+	unsigned int spatialLookupLength = sizeof(spatialLookup) / sizeof(spatialLookup[0]);
+	return hash % spatialLookupLength;
+}
+
+
+
+
+public void UpdateSpatialLookup(Vector2[] points, float radius)
+{
+	this.points = points;
+	this.radius = radius;
+
+	//Create (unordered) spatial lookup
+	for (0, points.Length, i = >
+	{
+		(int cellX, int cellY) = PositionToCellCoord(points[i], radius);
+		uint cellKey = GetKeyFromHash(HashCell(cellX, cellY));
+		spatialLookup[i] = new Entry(i, cellKey);
+		startIndices[i] = int.MaxValue; //Reset start index
+	});
+
+	Array.Sort(spatialLookup);
+
+	//Calculate start indices of each unique cell key in the spatial lookup
+	for (0, points.Length, i = >
+	{
+		uint key = spatialLookup[i].cellKey;
+		uint keyPrev = i == 0 ? uint.MaxValue : spatialLookup[i - 1].cellKey;
+		{
+			startIndices[key] = i;
+		}
+	});
+}
+
 #include <vector>
-#include <sstream>
-#include <random>
-#include <chrono>
-#include <iomanip>
-#include <imgui.h>
-#include <omp.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_opengl3.h>
-#define GL_SILENCE_DEPRECATION
+#include <algorithm>
+#include <limits>
+#include <utility>
+#include <cstdint>
+
+struct Entry {
+	int index;
+	uint32_t cellKey;
+
+	Entry(int index, uint32_t cellKey) : index(index), cellKey(cellKey) {}
+};
+
+std::pair<int, int> PositionToCellCoord(const std::pair<float, float>& point, float radius);
+uint32_t GetKeyFromHash(int hash);
+int HashCell(int cellX, int cellY);
+
+void UpdateSpatialLookup(const std::vector<std::pair<float, float>>& points, float radius, std::vector<Entry>& spatialLookup, std::vector<int>& startIndices) {
+	// Create (unordered) spatial lookup
+	spatialLookup.resize(points.size());
+	startIndices.resize(points.size(), std::numeric_limits<int>::max());
+	for (size_t i = 0; i < points.size(); ++i) {
+		auto [cellX, cellY] = PositionToCellCoord(points[i], radius);
+		uint32_t cellKey = GetKeyFromHash(HashCell(cellX, cellY));
+		spatialLookup[i] = Entry(i, cellKey);
+	}
+
+	std::sort(spatialLookup.begin(), spatialLookup.end(), [](const Entry& a, const Entry& b) {
+		return a.cellKey < b.cellKey;
+		});
+
+	// Calculate start indices of each unique cell key in the spatial lookup
+	for (size_t i = 0; i < points.size(); ++i) {
+		uint32_t key = spatialLookup[i].cellKey;
+		uint32_t keyPrev = i == 0 ? std::numeric_limits<uint32_t>::max() : spatialLookup[i - 1].cellKey;
+
+		if (key != keyPrev) {
+			startIndices[key] = i;
+		}
+	}
+}
+
+
+
+
+
+
+
+
+
+
+
+public void ForEachPointWithinRadius(Vector2 samplePoint)
+{
+	//Find which cell the sample point is in (this will be the centre of our 3x3 block)
+	float centerX, int centerY = PositionToCellCoord(samplePoint, radius);
+	float sqrRadius = radius * radius;
+
+	//Loop over all cells of the 3x3 block around the cell
+	foreach((int offsetX, int offsetY) in cellOffsets)
+	{
+		//Get key of current cell, then loop over all points that share that key
+		uint key = GetKeyFromHash(HashCell(centerX + offsetX, centerY + offsetY));
+		int cellStartIndex = startIndices[key];
+
+		for (int i = cellStartIndex; i < spatialLookup.Length; i++)
+		{
+			//exit loop if we're no longer looking at the correct cell
+			if (spatialLookup[i].cellKey != key) break;
+
+			int particleIndex = spatialLookup[i].particleIndex;
+			float sqrDst = (points[particleIndex] - samplePoint).sqrMagnitude;
+
+			//Test if the point is inside the radius
+			if (sqrDst <= sqrRadius)
+			{
+				//Do something with the particleIndex!
+				//either by writing code that uses it directly, or more likely by
+				//having this function take in a callback, or return an IEnumerable, etc.
+			}
+		}
+	}
+}
+
+#include <vector>
+#include <utility>
+#include <cstdint>
+#include <array>
+
+std::pair<int, int> PositionToCellCoord(const std::pair<float, float>& point, float radius);
+uint32_t GetKeyFromHash(int hash);
+int HashCell(int cellX, int cellY);
+
+void ForEachPointWithinRadius(const std::pair<float, float>& samplePoint, float radius, const std::vector<Entry>& spatialLookup, const std::vector<int>& startIndices, const std::vector<std::pair<float, float>>& points) {
+	// Find which cell the sample point is in (this will be the center of our 3x3 block)
+	auto [centerX, centerY] = PositionToCellCoord(samplePoint, radius);
+	float sqrRadius = radius * radius;
+
+	// cellOffsets array
+	std::array<std::pair<int, int>, 9> cellOffsets = { {
+		{-1, -1}, {0, -1}, {1, -1},
+		{-1,  0}, {0,  0}, {1,  0},
+		{-1,  1}, {0,  1}, {1,  1}
+	} };
+
+	// Loop over all cells of the 3x3 block around the cell
+	for (const auto& [offsetX, offsetY] : cellOffsets) {
+		// Get key of current cell, then loop over all points that share that key
+		uint32_t key = GetKeyFromHash(HashCell(centerX + offsetX, centerY + offsetY));
+		int cellStartIndex = startIndices[key];
+
+		for (size_t i = cellStartIndex; i < spatialLookup.size(); ++i) {
+			// Exit loop if we're no longer looking at the correct cell
+			if (spatialLookup[i].cellKey != key) break;
+
+			int particleIndex = spatialLookup[i].index;
+			float dx = points[particleIndex].first - samplePoint.first;
+			float dy = points[particleIndex].second - samplePoint.second;
+			float sqrDst = dx * dx + dy * dy;
+
+			// Test if the point is inside the radius
+			if (sqrDst <= sqrRadius) {
+				// Do something with the particleIndex!
+				// Either by writing code that uses it directly or by
+				// having this function take in a callback, or return an IEnumerable, etc.
+			}
+		}
+	}
+}
+
+This function takes a std::pair<float, float> as the samplePoint, a float radius, the spatialLookup, startIndices, and points vectors as input.Make sure to implement the helper functions PositionToCellCoord, GetKeyFromHash, and HashCell, as they were not provided in the original code snippet.
+
+In the "// Do something with the particleIndex!" section, you can add the code that you want to execute for each particle index within the radius.
+
+
+
+
+
+
+
+
+
+
+
+
+
+To implement spatial grid optimization in your CalculateDensity function, you can use the UpdateSpatialLookup function provided earlier.First, you need to update the spatial lookup with the given positions and smoothing radius, and then you can query the grid cells around the current position instead of iterating over all the positions.
+
+Here's an implementation of the CalculateDensity function using spatial grid optimization:
+
 #include <cmath>
 
-#ifndef M_PI
-#define M_PI 3.14
-#endif
+float SmoothingKernel(float smoothingRadius, float distance);
 
-constexpr auto SCREEN_WIDTH = 1280;
-constexpr auto SCREEN_HEIGHT = 720; 
+float CalculateDensity(const std::vector<std::pair<float, float>>& positions, float smoothingRadius, int index, const std::vector<Entry>& spatialLookup, const std::vector<int>& startIndices) {
+	float density = 0;
+	const float mass = 1;
 
-int rows = 20;
-int cols = rows;
-int radius = 3;
-float spacingX = 2 * radius + 1;
-float spacingY = 2 * radius + 1;
-float width = SCREEN_WIDTH / 2 - (((cols + 1) * spacingX) / 2);
-float height = SCREEN_HEIGHT / 2 - (((cols + 1) * spacingX) / 2);
-static float smoothingRadius = 50.0f;
-float targetDensity = 0.0001f;
-float pressureMultiplier = 0.01f;
-static float gravity = 0.000f;
-float dampingFactor = 0.6;
-float multiplicativeFactor = 1.0f;
-bool show_directional_lines = false;
-int nbFrames = 0;
-double lastTime = glfwGetTime();
-int iterations = 0;
-float boundsSizeX = SCREEN_WIDTH;
-float boundsSizeY = SCREEN_HEIGHT;
+	std::pair<float, float> position = positions[index];
 
-float fast_hypot(float x, float y) {
-    const float a = std::abs(x);
-    const float b = std::abs(y);
-    return (a > b) ? (a + 0.960f * b) : (b + 0.960f * a);
+	// Update the spatial lookup and start indices
+	// UpdateSpatialLookup(positions, smoothingRadius, spatialLookup, startIndices);
+
+	// Get the cell coordinates of the current position
+	auto [cellX, cellY] = PositionToCellCoord(position, smoothingRadius);
+
+	// Loop over neighboring cells
+	for (int x = cellX - 1; x <= cellX + 1; ++x) {
+		for (int y = cellY - 1; y <= cellY + 1; ++y) {
+
+			// Get the start index for the current cell
+			uint32_t cellKey = GetKeyFromHash(HashCell(x, y));
+			int startIndex = startIndices[cellKey];
+
+			// If the start index is not set, continue with the next cell
+			if (startIndex == std::numeric_limits<int>::max()) {
+				continue;
+			}
+
+			// Iterate over the points in the current cell
+			for (int i = startIndex; i < spatialLookup.size() && spatialLookup[i].cellKey == cellKey; ++i) {
+				std::pair<float, float> p = positions[spatialLookup[i].index];
+
+				// Calculate the distance and influence
+				float dx = p.first - position.first;
+				float dy = p.second - position.second;
+				float dst = std::sqrt(dx * dx + dy * dy);
+
+				if (dst > smoothingRadius) continue;
+
+				float influence = SmoothingKernel(smoothingRadius, dst);
+				density += mass * influence;
+			}
+		}
+	}
+
+	return density;
 }
 
-class Vector2 {
-public:
-    float X;
-    float Y;
+Before calling the CalculateDensity function, make sure to call UpdateSpatialLookup with the positions and smoothing radius, and pass the resulting spatialLookup and startIndices vectors to the CalculateDensity function :
 
-    Vector2(float x, float y) : X(x), Y(y) {}
+std::vector<Entry> spatialLookup;
+std::vector<int> startIndices;
+UpdateSpatialLookup(positions, smoothingRadius, spatialLookup, startIndices);
 
-    float magnitude() const {
-        return fast_hypot(X, Y);
-    }
-    Vector2 operator-(const Vector2& other) const {
-        return Vector2(X - other.X, Y - other.Y);
-    }
-    Vector2 operator/(const float& scalar) const {
-        return Vector2(X / scalar, Y / scalar);
-    }
-    Vector2 operator*(const float& right) const {
-        return Vector2(X * right, Y * right);
-    }
-    Vector2 operator-(const float& scalar) const {
-        return Vector2(X - scalar, Y - scalar);
-    }
-    Vector2 operator*(const Vector2& other) const {
-        return Vector2(X * other.X, Y * other.Y);
-    }
-    Vector2 operator-() const {
-        return Vector2(-X, -Y);
-    }
-    Vector2 operator+(const Vector2& other) const {
-        return Vector2(X + other.X, Y + other.Y);
-    }
-    Vector2& operator+=(const Vector2& vec) {
-        X += vec.X;
-        Y += vec.Y;
-        return *this;
-    }
-    static Vector2 Zero() {
-        return Vector2(0.0f, 0.0f);
-    }
-};
-void Update()
-{
-	velocity += Vector2.down * gravity;
-	position += velocity;
-	ResolveCollisions();
-	ball.draw;
-}
+float density = CalculateDensity(positions, smoothingRadius, index, spatialLookup, startIndices);
 
-class Ball {
-public:
-    float x;
-    float y;
-    float vx;
-    float vy;
-    float radius;
-
-    Ball(float x, float y, float vx, float vy, float radius) : x(x), y(y), vx(vx), vy(vy), radius(radius) {}
-
-
-    void resolveCollision(float boundsSizeX, float boundsSizeY) {
-        if (x + radius > boundsSizeX) {
-            x = boundsSizeX - radius;
-            vx *= -1 * dampingFactor;
-        }
-        else if (x - radius < 0) {
-            x = radius;
-            vx *= -1 * dampingFactor;
-        }
-
-        if (y + radius > boundsSizeY) {
-            y = boundsSizeY - radius;
-            vy *= -1 * dampingFactor;
-        }
-        else if (y - radius < 0) {
-            y = radius;
-            vy *= -1 * dampingFactor;
-        }
-    }
-
-    void draw() const {
-        drawCircle(x, y, 0, radius, 64);
-    }
-
-public:
-    void drawCircle(GLfloat x, GLfloat y, GLfloat z, GLfloat radius, GLint numberOfSides) const {
-        GLfloat twicePi = 2.0f * M_PI;
-
-        GLfloat* allCircleVertices = new GLfloat[(numberOfSides + 2) * 3];
-        allCircleVertices[0] = x;
-        allCircleVertices[1] = y;
-        allCircleVertices[2] = z;
-
-        for (int i = 1; i < numberOfSides + 2; i++)
-        {
-            allCircleVertices[i * 3] = x + (radius * cos(i * twicePi / numberOfSides));
-            allCircleVertices[i * 3 + 1] = y + (radius * sin(i * twicePi / numberOfSides));
-            allCircleVertices[i * 3 + 2] = z;
-        }
-
-        glColor3f(0.0f, 0.8f, 1.0f);
-        glEnableClientState(GL_VERTEX_ARRAY);
-        glVertexPointer(3, GL_FLOAT, 0, allCircleVertices);
-        glDrawArrays(GL_TRIANGLE_FAN, 0, numberOfSides + 2);
-        glDisableClientState(GL_VERTEX_ARRAY);
-
-        delete[] allCircleVertices;
-    }
-};
-
-static void drawCircle(float x, float y, float radius, int numSegments) {
-    glBegin(GL_LINE_LOOP);
-    for (int i = 0; i < numSegments; i++) {
-        float theta = 2.0f * M_PI * static_cast<float>(i) / static_cast<float>(numSegments);
-        float dx = radius * cosf(theta);
-        float dy = radius * sinf(theta);
-        glVertex2f(x + dx, y + dy);
-    }
-    glEnd();
-}
-
-std::vector<Ball> balls;
-
-int main(void)
-{
-    std::cout << "Initializing GLFW" << std::endl;
-    GLFWwindow* window;
-
-    if (!glfwInit())
-    {
-        return -1;
-    }
-    std::cout << "Initializing Window with width " << SCREEN_WIDTH << " and height " << SCREEN_HEIGHT << std::endl;
-    window = glfwCreateWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Simulation", NULL, NULL);
-
-    if (!window)
-    {
-        glfwTerminate();
-        return -1;
-    }
-
-    std::cout << "Making window current Context" << std::endl;
-    glfwMakeContextCurrent(window);
-    std::cout << "Setting up viewport and other initializations" << std::endl;
-    glViewport(0.0f, 0.0f, SCREEN_WIDTH, SCREEN_HEIGHT);
-
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glOrtho(0, SCREEN_WIDTH, 0, SCREEN_HEIGHT, 0, 1);
-    glMatrixMode(GL_MODELVIEW);
-
-    //IMGUI
-    std::cout << "Initializing IMGUI" << std::endl;
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-    const char* glsl_version = "#version 130";
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO(); (void)io;
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-
-    ImGui::StyleColorsDark();
-    ImGui_ImplGlfw_InitForOpenGL(window, true);
-    ImGui_ImplOpenGL3_Init(glsl_version);
-    bool show_smoothing_radius = false;
-
-    glfwSwapInterval(1);
-
-    std::mt19937 mt{ std::random_device{}() };
-    std::uniform_real_distribution<float> distX(0.0f, SCREEN_WIDTH);
-    std::uniform_real_distribution<float> distY(0.0f, SCREEN_HEIGHT);
-
-
-    for (int i = 0; i < rows; ++i)
-    {
-        for (int j = 0; j < cols; ++j) {
-            float x = distX(mt);
-            float y = distY(mt);
-            balls.emplace_back(x, y, 0.0, 0.0, radius);
-        }
-    }
-
-    //Grid
-
-    //for (int i = 0; i < rows; ++i) 
-    //{
-    //    for (int j = 0; j < cols; ++j) {
-    //        float x = (j + 1) * spacingX;
-    //        float y = (i + 1) * spacingY;
-    //        //spacingX += 0.3;
-    //        //spacingY += 0.3;
-    //        balls.emplace_back(width + x,height + y, 0.0, 0.0, radius);
-    //    }
-    //}
-    std::cout << "Entering window loop" << std::endl;
-
-    while (!glfwWindowShouldClose(window))
-    {
-        glClear(GL_COLOR_BUFFER_BIT);
-
-        std::vector<Vector2> positions;
-        std::vector<Vector2> velocity;
-        positions.reserve(balls.size()); // Reserve memory for expected number of elements
-
-        #pragma omp parallel for
-        for (auto& ball : balls) {
-            ball.draw();
-            ball.applyGravity(gravity);
-            positions.push_back(Vector2(ball.x, ball.y));
-        }
-
-#pragma omp parallel for
-        /*for (int i = 0; i < positions.size(); ++i) {
-            densities[i] = calculator.CalculateDensity(positions[i]);
-        }*/
-
-        for (auto& ball : balls) {
-            ball.updatePosition();
-            ball.resolveCollision(boundsSizeX, boundsSizeY);
-        }
-
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
-        {
-            static int ballRadius = radius;
-            ImGui::Begin("Config");
-            ImGui::SliderInt("Ball Radius", &ballRadius, 1, 70);
-            ImGui::End();
-
-            if (radius != ballRadius) {
-                radius = ballRadius;
-                for (auto& ball : balls) {
-                    ball.radius = radius;
-
-                }
-            }
-        }
-        /*if (show_smoothing_radius)
-        {
-            for (const auto& pos : positions) {
-                drawBounds(pos, smoothingRadius);
-            }
-
-        }
-        if (show_directional_lines)
-        {
-            show_directional_lines = true;
-
-        }*/
-        ImGui::Render();
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        glfwSwapBuffers(window);
-        glfwPollEvents();
-    }
-    // Cleanup
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
-    glfwDestroyWindow(window);
-    glfwTerminate();
-
-    return 0;
-}
+This implementation should provide better performance by only iterating over the neighboring cells instead of all the positions.Make sure to implement the helper functions PositionToCellCoord, GetKeyFromHash, and HashCell if you haven't already.
