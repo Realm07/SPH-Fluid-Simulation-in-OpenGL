@@ -27,9 +27,9 @@ GLfloat twicePi = 2.0f * M_PI;
 constexpr auto SCREEN_WIDTH = 1280;
 constexpr auto SCREEN_HEIGHT = 720;
 
-int rows = 20;
+int rows = 25;
 int cols = rows;
-int radius = 4;
+int radius = 3;
 int spacingX = 11;
 int spacingY = spacingX;
 float smoothingRadius = 66.0f;
@@ -52,6 +52,7 @@ std::mt19937 mt{ std::random_device{}() };
 std::uniform_real_distribution<float> distX(0.0f, SCREEN_WIDTH);
 std::uniform_real_distribution<float> distY(0.0f, SCREEN_HEIGHT);
 float sqrSmoothingRadius = smoothingRadius * smoothingRadius;
+
 
 float fast_hypot(float x, float y) {
     const float a = std::abs(x);
@@ -228,7 +229,6 @@ static void drawRadius(float x, float y, float z, float radius, int numSegments)
     }
     glEnd();
 }
-
 void drawBounds(Vector2 position, float radius) {
     glColor3f(1.0f, 0.0f, 0.0f);
     //drawRadius(position.X, position.Y, 0, radius, 30);
@@ -239,7 +239,31 @@ void drawOutline(Vector2 position, float smoothingRadius) {
     //drawRadius(position.X, position.Y, 0, radius, 30);
     drawRadius(position.X, position.Y, 0, smoothingRadius, 128);
 }
+static void drawLine(float x1, float y1, float x2, float y2) {
+    glBegin(GL_LINES);
+    glVertex2f(x1, y1);
+    glVertex2f(x2, y2);
+    glEnd();
+}
 
+float CalculateDensity(const std::vector<Vector2>& positions, float smoothingRadius)
+{
+    float density = 0;
+    const float mass = 1;
+    Vector2 samplePoint(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
+
+    for (const auto& p : positions) {
+        Vector2 offset = p - samplePoint;
+        float sqrDst = offset.sqrMagnitude();
+
+        if (sqrDst > sqrSmoothingRadius) continue;
+
+        float influence = SmoothingKernel(smoothingRadius, std::sqrt(sqrDst));
+        density += mass * influence;
+    }
+
+    return density;
+}
 float CalculateDensity(const std::vector<Vector2>& positions, float smoothingRadius, int index) {
     float density = 0;
     const float mass = 1;
@@ -257,7 +281,6 @@ float CalculateDensity(const std::vector<Vector2>& positions, float smoothingRad
 
     return density;
 }
-
 void PreCalculateDensities(std::vector<float>& densities, const std::vector<Vector2>& positions, float smoothingRadius) {
     if (densities.size() != positions.size()) {
         densities.resize(positions.size());
@@ -321,25 +344,7 @@ static Vector2 CalculatePressureForce(int particleIndex, const std::vector<Vecto
     return pressureForce;
 }
 
-float CalculateDensity(const std::vector<Vector2>& positions, float smoothingRadius)
-{
-    float density = 0;
-    const float mass = 1;
-    Vector2 samplePoint(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
-
-    for (const auto& p : positions) {
-        Vector2 offset = p - samplePoint;
-        float dst = offset.magnitude();
-
-        if (dst > smoothingRadius) continue;
-
-        float influence = SmoothingKernel(smoothingRadius, dst);
-        density += mass * influence;
-    }
-
-    return density;
-}
-
+std::vector<Ball> balls;
 //void initializeBalls(float spacingX, float spacingY, int rows, int cols, int radius, float width, float height, std::vector<Ball>& balls) {
 //    balls.clear();
 //    for (int i = 0; i < rows; ++i) {
@@ -350,7 +355,6 @@ float CalculateDensity(const std::vector<Vector2>& positions, float smoothingRad
 //        }
 //    }
 //}
-
 //void updateBallPositions(float spacingX, float spacingY, int rows, int cols, int radius, float width, float height, std::vector<Ball>& balls) {
 //    balls.clear();
 //    initializeBalls(spacingX, spacingY, rows, cols, radius, width, height, balls);
@@ -383,7 +387,6 @@ void resetSimulation(std::vector<Vector2>& positions, std::vector<Vector2>& velo
     }
 }
 
-std::vector<Ball> balls;
 void drawDensityAreas(const std::vector<float>& densities, float targetDensity) {
     glBegin(GL_QUADS);
     for (int i = 0; i < densities.size(); ++i) {
@@ -408,7 +411,6 @@ void drawDensityAreas(const std::vector<float>& densities, float targetDensity) 
     }
     glEnd();
 }
-
 Vector2 CalculateDensityGradient(const std::vector<Vector2>& positions, float smoothingRadius, int index) {
     const float mass = 1;
     const float epsilon = 1e-6f; // Small value to prevent division by zero
@@ -430,7 +432,6 @@ Vector2 CalculateDensityGradient(const std::vector<Vector2>& positions, float sm
     gradient.normalize(); // Normalize the final gradient vector
     return gradient;
 }
-
 void DrawDensityGradients(const std::vector<Vector2>& positions, float smoothingRadius) {
     const float arrowLengthFactor = 20.0f; // Adjust this factor for arrow length
     const float arrowHeadSize = 2.0f; // Adjust this size for arrow head
@@ -475,28 +476,24 @@ void DrawDensityGradients(const std::vector<Vector2>& positions, float smoothing
     }
 }
 
-
 //Spatial Grid
+
 //Convert a position to the coordinate of the cell it is within
 std::pair<float, float> PositionToCellCoord(const std::pair<float, float>& point, float radius) {
     float cellX = static_cast<float>(point.first / radius);
     float cellY = static_cast<float>(point.second / radius);
     return std::make_pair(cellX, cellY);
 }
-
-
 // Convert a cell coordinate into a single number.
 unsigned int HashCell(int cellX, int cellY) {
     unsigned int a = static_cast<unsigned int>(cellX) * 15823u;
     unsigned int b = static_cast<unsigned int>(cellY) * 9737333u;
     return a + b;
 }
-
 // wrap the hash value around the length of the array (so it can be used as an index)
 unsigned int GetKeyFromHash(unsigned int hash, size_t spatialLookupLength) {
     return hash % spatialLookupLength;
 }
-
 struct Entry {
     int index;
     uint32_t cellKey;
@@ -543,7 +540,6 @@ void UpdateSpatialLookup(const std::vector<Vector2>& positions, float radius, st
         DrawGridCellOutlines(spatialLookup, smoothingRadius);
     }
 }
-
 std::vector<int> ForEachPointWithinRadius(const Vector2& samplePoint, float radius, const std::vector<Entry>& spatialLookup, const std::vector<int>& startIndices, const std::vector<Vector2>& positions) {
     //std::cout << "ForEachPointWithinRadius: samplePoint = (" << samplePoint.X << ", " << samplePoint.Y << "), radius = " << radius << std::endl;
 
@@ -594,7 +590,6 @@ std::vector<int> ForEachPointWithinRadius(const Vector2& samplePoint, float radi
     return particleIndices;
 }
 
-
 void DrawGridCellOutlines(const std::vector<Entry>& spatialLookup, float cellSize) {
     std::set<std::pair<int, int>> drawnCells;
 
@@ -618,7 +613,6 @@ void DrawGridCellOutlines(const std::vector<Entry>& spatialLookup, float cellSiz
         }
     }
 }
-
 void HighlightGridCellOutlines(const std::vector<Entry>& spatialLookup, float cellSize, int highlightCellX, int highlightCellY) {
     std::set<std::pair<int, int>> drawnCells;
 
@@ -705,13 +699,6 @@ int main(void)
         balls.emplace_back(positions[i], velocities[i], radius);
     }
 
-    /*for (int i = 0; i < rows; ++i) {
-        for (int j = 0; j < cols; ++j) {
-            float x = (j + 1) * spacingX;
-            float y = (i + 1) * spacingY;
-            balls.emplace_back(width + x, height + y, 0.0, 0.0, radius);
-        }
-    }*/
     std::cout << "Entering window loop" << std::endl;
     std::vector<float> densities;
     positions.reserve(balls.size());
@@ -726,35 +713,17 @@ int main(void)
         glClear(GL_COLOR_BUFFER_BIT);
 
         float currentFrame = glfwGetTime();
-        
         float deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
         
         glfwGetCursorPos(window, &mouseX, &mouseY);
         Vector2 mousePosition(static_cast<float>(mouseX), static_cast<float>(-mouseY + 720));
-
         if (show_spatial_grid == true) {
             drawOutline(mousePosition, smoothingRadius);
         }
 
         UpdateSpatialLookup(positions, smoothingRadius, spatialLookup, startIndices);
-
         std::vector<int> particleIndices = ForEachPointWithinRadius(mousePosition, smoothingRadius, spatialLookup, startIndices, positions);
-
-        for (int i = 0; i < balls.size(); i++) {
-            if (std::find(particleIndices.begin(), particleIndices.end(), i) != particleIndices.end()) {
-
-                if (show_spatial_grid == true) {
-                    balls[i].draw(1.0, 0.0, 0.0);  // Red color
-                }
-                else {
-                    balls[i].draw(0.0, 0.8, 1.0);  // Default color
-                }
-            }
-            else {
-                balls[i].draw(0.0, 0.8, 1.0);  // Default color
-            }
-        }
 
         for (int i = 0; i < balls.size(); i++) {
             velocities[i] += Vector2::down() * gravity;
@@ -775,11 +744,24 @@ int main(void)
             positions[i] += velocities[i];
             balls[i].position = positions[i];
         }
+
         resolveCollisions(positions, velocities, radius, dampingFactor, boundsSizeX, boundsSizeY);
 
-        /*for (auto& ball : balls) {
-            ball.draw();
-        }*/
+        for (int i = 0; i < balls.size(); i++) {
+            if (std::find(particleIndices.begin(), particleIndices.end(), i) != particleIndices.end()) {
+
+                if (show_spatial_grid == true) {
+                    balls[i].draw(1.0, 0.0, 0.0);  // Red
+                }
+                else {
+                    balls[i].draw(0.0, 0.8, 1.0);  // Default
+                }
+            }
+            else {
+                balls[i].draw(0.0, 0.8, 1.0);  // Default
+            }
+        }
+
         
         //DrawDensityGradients(positions, smoothingRadius);
 
@@ -856,9 +838,3 @@ int main(void)
     return 0;
 }
 
-static void drawLine(float x1, float y1, float x2, float y2) {
-    glBegin(GL_LINES);
-    glVertex2f(x1, y1);
-    glVertex2f(x2, y2);
-    glEnd();
-}
