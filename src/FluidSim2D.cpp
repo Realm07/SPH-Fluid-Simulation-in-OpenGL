@@ -20,46 +20,53 @@
 #include <array>
 #include <unordered_set>
 #include <set>
+
 #ifndef M_PI
 #define M_PI 3.14
 #endif
-GLfloat twicePi = 2.0f * M_PI;
-constexpr auto SCREEN_WIDTH = 1280;
-constexpr auto SCREEN_HEIGHT = 720;
 
-int rows = 25;
+GLfloat twicePi = 2.0f * M_PI;
+int SCREEN_WIDTH = 1800;
+int SCREEN_HEIGHT = 900;
+
+int rows = 35;
 int cols = rows;
-int radius = 3;
+int radius = 4;
 int spacingX = 11;
 int spacingY = spacingX;
 float smoothingRadius = 66.0f;
 float gravity = 0.000f;
-float dampingFactor = 0.8f;
+float dampingFactor = 0.6f;
 float targetDensity = 0.0003f;
-float pressureMultiplier = 2.80f;
+float pressureMultiplier = 50.0f;
 float stiffnessConstant = 1.0f;
 float boundsSizeX = SCREEN_WIDTH;
 float boundsSizeY = SCREEN_HEIGHT;
+float mouseRadius = 100;
+GLint numberOfSides = 16;
+float viscosityStrength = 0.1f;
+float mouseStrength = 0.5f;
+float sqrSmoothingRadius = smoothingRadius * smoothingRadius;
+
 float width = SCREEN_WIDTH / 2.0 - (((cols + 1.0) * spacingX) / 2.0);
 float height = SCREEN_HEIGHT / 2.0 - (((cols + 1.0) * spacingX) / 2.0);
+
 bool show_smoothing_radius = false;
 bool show_directional_lines = false;
 bool show_density_areas = false;
 bool show_spatial_grid = false;
-float mouseRadius = smoothingRadius;
-GLint numberOfSides = 32;
-std::mt19937 mt{ std::random_device{}() };
-std::uniform_real_distribution<float> distX(0.0f, SCREEN_WIDTH);
-std::uniform_real_distribution<float> distY(0.0f, SCREEN_HEIGHT);
-float sqrSmoothingRadius = smoothingRadius * smoothingRadius;
+bool reset_to_random = true;
+bool reset_to_grid = false;
+bool show_mouse = true;
+bool enableInteraction = false;
 
 
+//Math
 float fast_hypot(float x, float y) {
     const float a = std::abs(x);
     const float b = std::abs(y);
     return (a > b) ? (a + 0.960f * b) : (b + 0.960f * a);
 }
-
 class Vector2 {
 public:
     float X;
@@ -99,6 +106,11 @@ public:
         Y += vec.Y;
         return *this;
     }
+    Vector2& operator-=(const Vector2& other) {
+        X -= other.X;
+        Y -= other.Y;
+        return *this;
+    }
     static Vector2 Zero() {
         return Vector2(0.0f, 0.0f);
     }
@@ -113,7 +125,6 @@ public:
         return Vector2(0.0f, -1.0f);
     }
 };
-
 static float Sign(float value) {
     return (value > 0) ? 1 : ((value < 0) ? -1 : 0);
 }
@@ -121,6 +132,7 @@ static float Abs(float value) {
     return (value < 0) ? -value : value;
 }
 
+//Curves
 static float SmoothingKernel(float radius, float dst)
 {
     if (dst < radius)
@@ -143,12 +155,31 @@ static float SmoothingKernelDerivative(float dst, float radius)
     }
     else return 0;
 }
+static float ViscositySmoothingKernel(float dst, float radius) {
+    float volume = M_PI * pow(radius, 8) / 4;
+    float value = radius * radius - dst * dst;
+    return value * value * value / volume;
+}
+
+//Randomization
+static Vector2 getRandomDir() {
+    float angle = static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * 2.0f * M_PI;
+    return Vector2(cos(angle), sin(angle));
+}
+Vector2 randomDir = getRandomDir();
+
+std::mt19937 mt{ std::random_device{}() };
+std::uniform_real_distribution<float> distX(0.0f, SCREEN_WIDTH);
+std::uniform_real_distribution<float> distY(0.0f, SCREEN_HEIGHT);
+
+//GLFW
 static void glfw_error_callback(int error, const char* description)
 {
     fprintf(stderr, "GLFW Error %d: %s\n", error, description);
 }
-std::vector<Vector2> velocities;
 
+//Particles
+std::vector<Vector2> velocities;
 class Ball {
 public:
     Vector2 position;
@@ -159,13 +190,35 @@ public:
         : position(position), velocity(velocity), radius(radius) {}
 
     void draw() const {
-        drawCircle(position.X, position.Y, 0, radius, 0.0, 0.8, 1.0);
-    }
-    void draw(GLfloat r, GLfloat g, GLfloat b) const {
+        // Calculate the magnitude of the velocity
+        float magnitude = sqrt(velocity.X * velocity.X + velocity.Y * velocity.Y);
+
+        // Normalize based on expected max velocity
+        float maxVelocity = 2.0f; // Adjust this to your simulation's needs
+        float normalizedMagnitude = std::min(magnitude / maxVelocity, 1.0f);
+
+        // Initialize RGB components
+        GLfloat r = 0.0f;
+        GLfloat g = 0.0f;
+        GLfloat b = 0.0f;
+        float intensityScale = 1.0f; // Scale down the brightness
+
+        // Adjusted ranges for smoother transitions
+        if (normalizedMagnitude <= 0.5f) {
+            // Fade from Cyan to Green (more gradual)
+            r = 0.0f * intensityScale;
+            g = 1.0f * intensityScale;
+            b = (1.0f - 2 * normalizedMagnitude) * intensityScale; // More gradual decrease in B
+        }
+        else {
+            // Fade from Green through Yellow to Red (more gradual)
+            r = (2 * normalizedMagnitude - 1.0f) * intensityScale; // More gradual increase in R
+            g = (1.0f - (normalizedMagnitude - 0.5f) * 2) * intensityScale; // More gradual decrease in G
+            b = 0.0f * intensityScale;
+        }
+
+        // Draw the ball with the calculated color
         drawCircle(position.X, position.Y, 0, radius, r, g, b);
-    }
-    void drawOutlineCircle() const {
-        drawCircle(position.X, position.Y, 0, radius, 0.0, 1.0, 0.0);
     }
 
 public:
@@ -191,7 +244,6 @@ public:
         delete[] allCircleVertices;
     }
 };
-
 void resolveCollisions(std::vector<Vector2>& positions, std::vector<Vector2>& velocities, float radius, float dampingFactor, float boundsSizeX, float boundsSizeY) {
     for (int i = 0; i < positions.size(); i++) {
         float minX = radius;
@@ -219,6 +271,7 @@ void resolveCollisions(std::vector<Vector2>& positions, std::vector<Vector2>& ve
     }
 }
 
+//Drawing
 static void drawRadius(float x, float y, float z, float radius, int numSegments) {
     glBegin(GL_LINE_LOOP);
     for (int i = 0; i < numSegments; i++) {
@@ -229,7 +282,7 @@ static void drawRadius(float x, float y, float z, float radius, int numSegments)
     }
     glEnd();
 }
-void drawBounds(Vector2 position, float radius) {
+void drawBounds(float radius) {
     glColor3f(1.0f, 0.0f, 0.0f);
     //drawRadius(position.X, position.Y, 0, radius, 30);
     drawRadius(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, 0, radius, 30);
@@ -246,6 +299,7 @@ static void drawLine(float x1, float y1, float x2, float y2) {
     glEnd();
 }
 
+//Density
 float CalculateDensity(const std::vector<Vector2>& positions, float smoothingRadius)
 {
     float density = 0;
@@ -264,13 +318,12 @@ float CalculateDensity(const std::vector<Vector2>& positions, float smoothingRad
 
     return density;
 }
-float CalculateDensity(const std::vector<Vector2>& positions, float smoothingRadius, int index) {
+float CalculateDensity(int index, const std::vector<int>& particleIndices, const std::vector<Vector2>& positions, float smoothingRadius) {
     float density = 0;
     const float mass = 1;
-    Vector2 samplePoint(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
     Vector2 position = positions[index];
-    for (const auto& p : positions) {
-        Vector2 offset = p - position;
+    for (int pIndex : particleIndices) {
+        Vector2 offset = positions[pIndex] - position;
         float sqrDst = offset.sqrMagnitude();
 
         if (sqrDst > sqrSmoothingRadius) continue;
@@ -281,24 +334,19 @@ float CalculateDensity(const std::vector<Vector2>& positions, float smoothingRad
 
     return density;
 }
-void PreCalculateDensities(std::vector<float>& densities, const std::vector<Vector2>& positions, float smoothingRadius) {
+void PreCalculateDensities(std::vector<float>& densities, const std::vector<int>& particleIndices, const std::vector<Vector2>& positions, float smoothingRadius) {
     if (densities.size() != positions.size()) {
         densities.resize(positions.size());
     }
     for (size_t i = 0; i < positions.size(); ++i) {
-        densities[i] = CalculateDensity(positions, smoothingRadius, i);
+        densities[i] = CalculateDensity(i, particleIndices, positions, smoothingRadius);
     }
 }
 
+//Forces
 static float ConvertDensityToPressure(float density)
 {
     return (density - targetDensity) * pressureMultiplier;
-}
-static float CalculateDensityError(float density)
-{
-    float densityError = density - targetDensity;
-    return densityError;
-
 }
 float CalculateSharedPressure(float densityA, float densityB)
 {
@@ -306,21 +354,15 @@ float CalculateSharedPressure(float densityA, float densityB)
     float pressureB = ConvertDensityToPressure(densityB);
     return (pressureA + pressureB) / 2;
 };
-static Vector2 getRandomDir() {
-    float angle = static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * 2.0f * M_PI;
-    return Vector2(cos(angle), sin(angle));
-}
-Vector2 randomDir = getRandomDir();
-static Vector2 CalculatePressureForce(int particleIndex, const std::vector<Vector2>& positions, const std::vector<float>& densities, float smoothingRadius)
+Vector2 CalculatePressureForce(int index, const std::vector<int>& particleIndices, const std::vector<Vector2>& positions, const std::vector<float>& densities, float smoothingRadius)
 {
     Vector2 pressureForce = Vector2::Zero();
     float mass = 1.0f;
 
-    for (int otherParticleIndex = 0; otherParticleIndex < positions.size(); otherParticleIndex++)
-    {
-        if (particleIndex == otherParticleIndex) continue;
+    for (int otherParticleIndex : particleIndices) {
+        if (index == otherParticleIndex) continue;
 
-        Vector2 offset = positions[otherParticleIndex] - positions[particleIndex];
+        Vector2 offset = positions[otherParticleIndex] - positions[index];
         float sqrDst = offset.sqrMagnitude();
 
         if (sqrDst > sqrSmoothingRadius) continue;
@@ -329,36 +371,74 @@ static Vector2 CalculatePressureForce(int particleIndex, const std::vector<Vecto
         Vector2 dir = (dst == 0) ? getRandomDir() : offset / dst;
         float slope = SmoothingKernelDerivative(dst, smoothingRadius);
         float density = densities[otherParticleIndex];
-        float sharedPressure = CalculateSharedPressure(density, densities[particleIndex]);
+        float sharedPressure = CalculateSharedPressure(density, densities[index]);
         pressureForce += dir * sharedPressure * slope * mass / density;
 
         if (show_directional_lines == true)
         {
             glBegin(GL_LINES);
             glColor3f(1.0f, 0.0f, 1.0f);
-            glVertex2f(positions[particleIndex].X, positions[particleIndex].Y);
+            glVertex2f(positions[index].X, positions[index].Y);
             glVertex2f(positions[otherParticleIndex].X, positions[otherParticleIndex].Y);
             glEnd();
         }
     }
     return pressureForce;
 }
+Vector2 InteractionForce(const Vector2& inputPos, float radius, float strength, int particleIndex, const std::vector<Vector2>& positions, int mouseButton) {
+    Vector2 interactionForce = Vector2::Zero();
+    Vector2 offset = inputPos - positions[particleIndex];
+    float sqrDst = offset.sqrMagnitude();
+    if (sqrDst < radius * radius)
+    {
+        float dst = std::sqrt(sqrDst);
+        Vector2 dirToInput = (dst < std::numeric_limits<float>::epsilon()) ? Vector2::Zero() : offset / dst;
+        float centerT = 1 - dst / radius;
+        if (mouseButton == GLFW_MOUSE_BUTTON_LEFT) {
+            interactionForce += dirToInput * strength;
+        }
+        else if (mouseButton == GLFW_MOUSE_BUTTON_RIGHT) {
+            interactionForce -= dirToInput * strength;
+        }
+    }
+    //std::cout << interactionForce.X << " , " << interactionForce.Y << std::endl;
+    return interactionForce;
+}
+Vector2 CalculateViscosityForce(int particleIndex, const std::vector<int>& neighborIndices, const std::vector<Vector2>& positions, const std::vector<Vector2>& velocities, float smoothingRadius, float viscosityStrength)
+{
+    Vector2 viscosityForce = Vector2::Zero();
+    Vector2 position = positions[particleIndex];
 
+    for (int otherParticleIndex : neighborIndices)
+    {
+        if (particleIndex == otherParticleIndex) continue;
+
+        Vector2 offset = positions[otherParticleIndex] - position;
+        float dst = offset.magnitude();
+        float influence = ViscositySmoothingKernel(dst, smoothingRadius);
+        viscosityForce += (velocities[otherParticleIndex] - velocities[particleIndex]) * influence;
+    }
+
+    return viscosityForce * viscosityStrength;
+}
+
+//Updating and Resetting
 std::vector<Ball> balls;
-//void initializeBalls(float spacingX, float spacingY, int rows, int cols, int radius, float width, float height, std::vector<Ball>& balls) {
-//    balls.clear();
-//    for (int i = 0; i < rows; ++i) {
-//        for (int j = 0; j < cols; ++j) {
-//            float x = (j + 1) * spacingX;
-//            float y = (i + 1) * spacingY;
-//            balls.emplace_back(width + x, height + y, 0.0, 0.0, radius);
-//        }
-//    }
-//}
-//void updateBallPositions(float spacingX, float spacingY, int rows, int cols, int radius, float width, float height, std::vector<Ball>& balls) {
-//    balls.clear();
-//    initializeBalls(spacingX, spacingY, rows, cols, radius, width, height, balls);
-//}
+void initializeBalls(float spacingX, float spacingY, int rows, int cols, int radius, float width, float height, std::vector<Ball>& balls, std::vector<Vector2>& positions) {
+    balls.clear();
+    for (int i = 0; i < rows; ++i) {
+        for (int j = 0; j < cols; ++j) {
+            float x = (j + 1) * spacingX;
+            float y = (i + 1) * spacingY;
+            positions.emplace_back(width + x, height + y);
+            velocities.emplace_back(Vector2::Zero());
+        }
+    }
+}
+void updateBallPositions(float spacingX, float spacingY, int rows, int cols, int radius, float width, float height, std::vector<Ball>& balls, std::vector<Vector2>& positions) {
+    balls.clear();
+    initializeBalls(spacingX, spacingY, rows, cols, radius, width, height, balls, positions);
+}
 void resetSimulation(std::vector<Vector2>& positions, std::vector<Vector2>& velocities, std::vector<Ball>& balls, int rows, int cols) {
     positions.clear();
     velocities.clear();
@@ -367,26 +447,31 @@ void resetSimulation(std::vector<Vector2>& positions, std::vector<Vector2>& velo
     velocities.reserve(rows * cols);
     balls.reserve(rows * cols);
 
-    for (int i = 0; i < rows; ++i) {
-        for (int j = 0; j < cols; ++j) {
-            positions.emplace_back(distX(mt), distY(mt));
-            velocities.emplace_back(Vector2::Zero());
+    if (reset_to_grid == true){
+        for (int i = 0; i < rows; ++i) {
+            for (int j = 0; j < cols; ++j) {
+                float x = (j + 1) * spacingX;
+                float y = (i + 1) * spacingY;
+                positions.emplace_back(width + x, height + y);
+                velocities.emplace_back(Vector2::Zero());
+            }
         }
     }
-    /*for (int i = 0; i < rows; ++i) {
-        for (int j = 0; j < cols; ++j) {
-            float x = (j + 1) * spacingX;
-            float y = (i + 1) * spacingY;
-            positions.emplace_back(width + x, height + y);
-            velocities.emplace_back(Vector2::Zero());
+    if (reset_to_random == true) {
+        for (int i = 0; i < rows; ++i) {
+            for (int j = 0; j < cols; ++j) {
+                positions.emplace_back(distX(mt), distY(mt));
+                velocities.emplace_back(Vector2::Zero());
+            }
         }
-    }*/
+    }
 
     for (size_t i = 0; i < positions.size(); ++i) {
         balls.emplace_back(positions[i], velocities[i], radius);
     }
 }
 
+//Drawing
 void drawDensityAreas(const std::vector<float>& densities, float targetDensity) {
     glBegin(GL_QUADS);
     for (int i = 0; i < densities.size(); ++i) {
@@ -476,22 +561,21 @@ void DrawDensityGradients(const std::vector<Vector2>& positions, float smoothing
     }
 }
 
-//Spatial Grid
-
-//Convert a position to the coordinate of the cell it is within
+//Optimized Particle Lookup
 std::pair<float, float> PositionToCellCoord(const std::pair<float, float>& point, float radius) {
+    //Convert a position to the coordinate of the cell it is within
     float cellX = static_cast<float>(point.first / radius);
     float cellY = static_cast<float>(point.second / radius);
     return std::make_pair(cellX, cellY);
 }
-// Convert a cell coordinate into a single number.
 unsigned int HashCell(int cellX, int cellY) {
+    // Convert a cell coordinate into a single number.
     unsigned int a = static_cast<unsigned int>(cellX) * 15823u;
     unsigned int b = static_cast<unsigned int>(cellY) * 9737333u;
     return a + b;
 }
-// wrap the hash value around the length of the array (so it can be used as an index)
 unsigned int GetKeyFromHash(unsigned int hash, size_t spatialLookupLength) {
+    // wrap the hash value around the length of the array (so it can be used as an index)
     return hash % spatialLookupLength;
 }
 struct Entry {
@@ -499,9 +583,7 @@ struct Entry {
     uint32_t cellKey;
     int cellX;
     int cellY;
-
     Entry() : index(0), cellKey(0), cellX(0), cellY(0) {}  // Default constructor
-
     Entry(int index, uint32_t cellKey, int cellX, int cellY) : index(index), cellKey(cellKey), cellX(cellX), cellY(cellY) {}
 };
 
@@ -540,22 +622,18 @@ void UpdateSpatialLookup(const std::vector<Vector2>& positions, float radius, st
         DrawGridCellOutlines(spatialLookup, smoothingRadius);
     }
 }
+std::vector<int> particleIndices;
+std::array<std::pair<int, int>, 9> cellOffsets = { {
+    {-1, -1}, {0, -1}, {1, -1},
+    {-1,  0}, {0,  0}, {1,  0},
+    {-1,  1}, {0,  1}, {1,  1}
+} };
 std::vector<int> ForEachPointWithinRadius(const Vector2& samplePoint, float radius, const std::vector<Entry>& spatialLookup, const std::vector<int>& startIndices, const std::vector<Vector2>& positions) {
-    //std::cout << "ForEachPointWithinRadius: samplePoint = (" << samplePoint.X << ", " << samplePoint.Y << "), radius = " << radius << std::endl;
-
+    particleIndices.clear();
     // Find which cell the sample point is in (this will be the center of our 3x3 block)
     std::pair<int, int> center = PositionToCellCoord({ samplePoint.X, samplePoint.Y }, radius);
     int centerX = center.first;
     int centerY = center.second;
-    float sqrRadius = radius * radius;
-    std::vector<int> particleIndices;
-
-    // cellOffsets array
-    std::array<std::pair<int, int>, 9> cellOffsets = { {
-        {-1, -1}, {0, -1}, {1, -1},
-        {-1,  0}, {0,  0}, {1,  0},
-        {-1,  1}, {0,  1}, {1,  1}
-    } };
 
     // Loop over all cells of the 3x3 block around the cell
     for (const auto& offset : cellOffsets) {
@@ -579,7 +657,7 @@ std::vector<int> ForEachPointWithinRadius(const Vector2& samplePoint, float radi
             float dy = positions[particleIndex].Y - samplePoint.Y;
             float sqrDst = dx * dx + dy * dy;
             // Test if the point is inside the radius
-            if (sqrDst <= sqrRadius) {
+            if (sqrDst <= sqrSmoothingRadius) {
                 particleIndices.push_back(particleIndex);
                 //std::cout << "    Particle " << particleIndex << " is within radius: (" << positions[particleIndex].X << ", " << positions[particleIndex].Y << ")" << std::endl;
             }
@@ -590,6 +668,7 @@ std::vector<int> ForEachPointWithinRadius(const Vector2& samplePoint, float radi
     return particleIndices;
 }
 
+//Drawing
 void DrawGridCellOutlines(const std::vector<Entry>& spatialLookup, float cellSize) {
     std::set<std::pair<int, int>> drawnCells;
 
@@ -677,149 +756,174 @@ int main(void)
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
     
-    //glfwSwapInterval(1);
+    glfwSwapInterval(1);
+
     std::vector<Vector2> positions;
-    positions.reserve(rows * cols); 
+    std::vector<Vector2> predictedPositions;
+    positions.reserve(rows * cols);
     std::vector<Vector2> velocities(rows * cols, Vector2(0.0, 0.0));
     std::vector<Vector2> mousePosition;
-    for (int i = 0; i < rows; ++i) {
+    /*for (int i = 0; i < rows; ++i) {
         for (int j = 0; j < cols; ++j) {
             positions.emplace_back(distX(mt), distY(mt));
         }
-    }
-    /*for (int i = 0; i < rows; ++i) {
+    }*/
+    for (int i = 0; i < rows; ++i) {
         for (int j = 0; j < cols; ++j) {
             float x = (j + 1) * spacingX;
             float y = (i + 1) * spacingY;
             positions.emplace_back(width + x, height + y);
         }
-    }*/
+    }
     balls.reserve(rows * cols);
     for (size_t i = 0; i < positions.size(); ++i) {
         balls.emplace_back(positions[i], velocities[i], radius);
     }
-
+    
     std::cout << "Entering window loop" << std::endl;
     std::vector<float> densities;
     positions.reserve(balls.size());
     densities.reserve(balls.size());
     float lastFrame = 0.0f;
     double mouseX, mouseY;
-    std::vector<Entry> spatialLookup(positions.size()); // Make sure it's resized with the correct size
-    std::vector<int> startIndices(positions.size(), std::numeric_limits<int>::max()); // Similar for startIndices
-
+    std::vector<Entry> spatialLookup(positions.size()); 
+    std::vector<int> startIndices(positions.size(), std::numeric_limits<int>::max()); 
+    predictedPositions = positions; 
+    std::vector<bool> isParticleLost(balls.size(), false);
+    int lostParticles = 0;
     while (!glfwWindowShouldClose(window))
     {
         glClear(GL_COLOR_BUFFER_BIT);
-
+        /*std::fill(isParticleLost.begin(), isParticleLost.end(), false);
+        lostParticles = 0;*/
         float currentFrame = glfwGetTime();
         float deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
         
         glfwGetCursorPos(window, &mouseX, &mouseY);
-        Vector2 mousePosition(static_cast<float>(mouseX), static_cast<float>(-mouseY + 720));
-        if (show_spatial_grid == true) {
-            drawOutline(mousePosition, smoothingRadius);
+        Vector2 mousePosition(static_cast<float>(mouseX), static_cast<float>(-mouseY + SCREEN_HEIGHT));
+        if (show_mouse == true) {
+            drawOutline(mousePosition, mouseRadius);
         }
-
-        UpdateSpatialLookup(positions, smoothingRadius, spatialLookup, startIndices);
-        std::vector<int> particleIndices = ForEachPointWithinRadius(mousePosition, smoothingRadius, spatialLookup, startIndices, positions);
-
+        
         for (int i = 0; i < balls.size(); i++) {
             velocities[i] += Vector2::down() * gravity;
-            //predictedositions[i] = positions[i] * velocities[i];
+            predictedPositions[i] = positions[i] + velocities[i];
         }
 
+        UpdateSpatialLookup(predictedPositions, smoothingRadius, spatialLookup, startIndices);
+        std::vector<std::vector<int>> particleIndices(positions.size());
         float density = CalculateDensity(positions, smoothingRadius);
+        for (int i = 0; i < positions.size(); ++i) {
+            particleIndices[i] = ForEachPointWithinRadius(predictedPositions[i], smoothingRadius, spatialLookup, startIndices, predictedPositions);
+        }
+
         densities.resize(positions.size());
-        PreCalculateDensities(densities, positions, smoothingRadius);
+        for (int i = 0; i < positions.size(); ++i) {
+            densities[i] = CalculateDensity(i, particleIndices[i], predictedPositions, smoothingRadius);
+        }
 
         for (int i = 0; i < positions.size(); ++i) {
-            Vector2 pressureForce = CalculatePressureForce(i, positions, densities, smoothingRadius);
+            
+            Vector2 pressureForce = CalculatePressureForce(i, particleIndices[i], predictedPositions, densities, smoothingRadius);
             Vector2 pressureAcceleration = pressureForce / densities[i];
             velocities[i] += pressureAcceleration * stiffnessConstant;
+        }
+        for (int i = 0; i < positions.size(); ++i) {
+
+            Vector2 viscosityForce = CalculateViscosityForce(i, particleIndices[i], predictedPositions, velocities, smoothingRadius, viscosityStrength);
+            velocities[i] += viscosityForce;
+        }
+        
+        int mouseButton = -1;
+        if (enableInteraction == true)
+        {
+            if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
+                mouseButton = GLFW_MOUSE_BUTTON_LEFT;
+            }
+            else if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
+                mouseButton = GLFW_MOUSE_BUTTON_RIGHT;
+            }
+        }
+        for (int i = 0; i < balls.size(); i++) {
+            float density = std::max(densities[i], 1.0f); // Clamp density to a minimum value of 0.01
+            Vector2 interactionForce = InteractionForce(mousePosition, mouseRadius, mouseStrength, i, predictedPositions, mouseButton);
+            velocities[i] += interactionForce / density;
         }
 
         for (int i = 0; i < balls.size(); i++) {
             positions[i] += velocities[i];
             balls[i].position = positions[i];
+            balls[i].velocity = velocities[i]; // Update the velocity of each Ball object
         }
-
+        //for (int i = 0; i < balls.size(); i++) {
+        //    if (!isParticleLost[i] && (std::isnan(velocities[i].X) || std::isnan(velocities[i].Y))) {
+        //        lostParticles++;
+        //        isParticleLost[i] = true; // This particle is now counted as lost
+        //    }
+        //}
         resolveCollisions(positions, velocities, radius, dampingFactor, boundsSizeX, boundsSizeY);
 
-        for (int i = 0; i < balls.size(); i++) {
-            if (std::find(particleIndices.begin(), particleIndices.end(), i) != particleIndices.end()) {
-
-                if (show_spatial_grid == true) {
-                    balls[i].draw(1.0, 0.0, 0.0);  // Red
-                }
-                else {
-                    balls[i].draw(0.0, 0.8, 1.0);  // Default
-                }
-            }
-            else {
-                balls[i].draw(0.0, 0.8, 1.0);  // Default
-            }
+        for (const Ball& ball : balls) {
+            ball.draw();
         }
-
-        
+       
         //DrawDensityGradients(positions, smoothingRadius);
 
-        //std::cout << deltaTime << std::endl;
-        //width = SCREEN_WIDTH / 2 - (((cols + 1) * spacingX) / 2);
-        //height = SCREEN_HEIGHT / 2 - (((cols + 1) * spacingY) / 2);
-        //updateBallPositions(spacingX, spacingY, rows, cols, radius, width, height, balls);
+        width = SCREEN_WIDTH / 2 - (((cols + 1) * spacingX) / 2);
+        height = SCREEN_HEIGHT / 2 - (((cols + 1) * spacingY) / 2);
+        //updateBallPositions(spacingX, spacingY, rows, cols, radius, width, height, balls, positions);
+
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         {
             static int ballRadius = radius;
             ImGui::Begin("Config");
-            ImGui::SliderFloat("Gravity", &gravity, -0.01f, 0.01f);
+            ImGui::SliderFloat("Gravity", &gravity, 0.0f, 0.2f);
             ImGui::SliderInt("Ball Radius", &ballRadius, 1, 70);
             ImGui::Text("Density: %.8f", density);
             ImGui::SliderFloat("Smoothing Radius", &smoothingRadius, 0.05f, 500.0f);
             //ImGui::SliderInt("Spacing X", &spacingX, 0.0, 150.0);
             ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
-            ImGui::SliderFloat("Pressure Multiplier", &pressureMultiplier, 0.01f, 100.0f);
+            ImGui::SliderFloat("Pressure Multiplier", &pressureMultiplier, 50.0f, 1000.0f);
             //ImGui::SliderFloat("Multiplicative Factor", &multiplicativeFactor, 1.0f, 100.0f);
-            ImGui::SliderFloat("Target Density", &targetDensity, 0.000001f, 0.001f, "%.8f");
-            ImGui::SliderFloat("Stiffness Constant", &stiffnessConstant, 0.1f, 1.0f);
+            ImGui::SliderFloat("Target Density", &targetDensity, 0.000001f, 0.01f, "%.8f");
+            ImGui::SliderFloat("Mouse Radius", &mouseRadius, 10.0f, 100.0f);
+            ImGui::SliderFloat("Mouse Strength", &mouseStrength, 0.1f, 2.0f);
+            ImGui::SliderFloat("Viscosity Strength", &viscosityStrength, 0.1f, 1000.0f);
+            //ImGui::SliderFloat("Stiffness Constant", &stiffnessConstant, 0.1f, 1.0f);
             ImGui::Checkbox("Show Smoothing Radius", &show_smoothing_radius);
             ImGui::SameLine();
             ImGui::Checkbox("Show Directional Lines", &show_directional_lines);
             ImGui::Checkbox("Show Density Areas", &show_density_areas);
             ImGui::SameLine();
             ImGui::Checkbox("Show Spatial Grid", &show_spatial_grid);
+            ImGui::Checkbox("Enable Interaction", &enableInteraction);
+            
+            //ImGui::Text("Lost Particles: %d", lostParticles);
+            if (ImGui::Button("Reset to Grid")) {
+                reset_to_grid = true;
+                reset_to_random = false;
+                resetSimulation(positions, velocities, balls, rows, cols);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Reset to Random")) {
+                reset_to_grid = false;
+                reset_to_random = true;
+                resetSimulation(positions, velocities, balls, rows, cols);
+            }
             ImGui::End();
 
             if (radius != ballRadius) {
                 radius = ballRadius;
-                for (auto& ball : balls) {
-                    ball.radius = radius;
-
-                }
+                for (auto& ball : balls) ball.radius = radius;
             }
-            if (spacingY != spacingX)
-            {
-                spacingY = spacingX;
-            }
-            if (show_smoothing_radius) {
-                for (const auto& pos : positions) {
-                    drawBounds(pos, smoothingRadius);
-                }
-            }
-            if (show_directional_lines) {
-                show_directional_lines = true;
-
-            }
-            if (show_density_areas) {
-                drawDensityAreas(densities, targetDensity);
-                show_density_areas = true;
-            }
-            if (show_density_areas) {
-                show_density_areas = true;
-            }
+            if (spacingY != spacingX) spacingY = spacingX;
+            if (show_smoothing_radius) drawBounds(smoothingRadius);
+            if (show_directional_lines) show_directional_lines = true;
+            if (enableInteraction) enableInteraction = true;
+            if (show_density_areas) { drawDensityAreas(densities, targetDensity); show_density_areas = true; }
         }
         if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) {
             resetSimulation(positions, velocities, balls, rows, cols);
@@ -837,4 +941,3 @@ int main(void)
 
     return 0;
 }
-
