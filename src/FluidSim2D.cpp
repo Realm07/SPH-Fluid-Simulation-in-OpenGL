@@ -27,7 +27,7 @@ constexpr GLfloat twicePi = 2.0f * M_PI;
 int SCREEN_WIDTH = 1800;
 int SCREEN_HEIGHT = 900;
 
-int rows = 40;
+int rows = 64;
 int cols = rows;
 int radius = 4;
 constexpr int spacingX = 11;
@@ -49,10 +49,17 @@ float mouseStrength = 0.5f;
 float sqrSmoothingRadius = smoothingRadius * smoothingRadius;
 float lastFrame = 0.0f;
 double mouseX, mouseY;
+
+//window
 int lostParticles = 0;
 float width = SCREEN_WIDTH / 2.0 - (((cols + 1.0) * spacingX) / 2.0);
 float height = SCREEN_HEIGHT / 2.0 - (((cols + 1.0) * spacingX) / 2.0);
+float minX = radius;
+float maxX = boundsSizeX - radius;
+float minY = radius;
+float maxY = boundsSizeY - radius;
 
+bool show_obstacle_editor = false;
 bool show_smoothing_radius = false;
 bool show_directional_lines = false;
 bool show_density_areas = false;
@@ -61,6 +68,7 @@ bool reset_to_random = true;
 bool reset_to_grid = false;
 bool show_mouse = true;
 bool enableInteraction = false;
+bool show_default_obstacle = false;
 
 //Math
 static float fast_hypot(float x, float y) {
@@ -268,88 +276,91 @@ public:
     }
 };
 
-Vector2 obstacleCenter(1400.0f, 350.0f);
-float obstacleWidth = 170.f;
-float obstacleHeight = 375.0f;
-// Draw the obstacle bounds
+//Collisions
+Vector2 defaultObstacleCenter(1400.0f, 350.0f);
+float defaultObstacleWidth = 170.f;
+float defaultObstacleHeight = 375.0f;
+struct Obstacle {
+    Vector2 center;
+    float width;
+    float height;
+};
+std::vector<Obstacle> obstacles;
+static inline void drawObstacles() {
+    for (auto& obstacle : obstacles) {
+        float minX = obstacle.center.X - obstacle.width / 2;
+        float minY = obstacle.center.Y - obstacle.height / 2;
+        float maxX = obstacle.center.X + obstacle.width / 2;
+        float maxY = obstacle.center.Y + obstacle.height / 2;
 
-float minX = radius;
-float maxX = boundsSizeX - radius;
-float minY = radius;
-float maxY = boundsSizeY - radius;
+        glBegin(GL_LINE_LOOP);
+        glColor3f(1.0f, 1.0f, 1.0f); // White color for the obstacle
+        glVertex2f(minX, minY);
+        glVertex2f(maxX, minY);
+        glVertex2f(maxX, maxY);
+        glVertex2f(minX, maxY);
+        glEnd();
+    }
+}
+static inline void resolveCollisions(std::vector<Vector2>& positions, std::vector<Vector2>& velocities, float radius, float dampingFactor, float boundsSizeX, float boundsSizeY) {
+    for (size_t i = 0; i < positions.size(); i++) {
+        Vector2& pos = positions[i];
+        Vector2& vel = velocities[i];
 
-static inline void resolveCollisions(std::vector<Vector2>& positions, std::vector<Vector2>& velocities, float radius, float dampingFactor, float boundsSizeX, float boundsSizeY, const Vector2& obstacleCenter, float obstacleWidth, float obstacleHeight) {
-    // Draw the main bounding box
-    //glBegin(GL_LINE_LOOP);
-    //glColor3f(1.0f, 1.0f, 1.0f);  // Set color to white
-    //glVertex2f(0 + horizontalFactor, 0 + verticalFactor);
-    //glVertex2f(boundsSizeX - horizontalFactor, 0 + verticalFactor);
-    //glVertex2f(boundsSizeX - horizontalFactor, boundsSizeY - verticalFactor);
-    //glVertex2f(0 + horizontalFactor, boundsSizeY - verticalFactor);
-    //glEnd();
-
-    float obstacleMinX = obstacleCenter.X - obstacleWidth / 2.0f;
-    float obstacleMaxX = obstacleCenter.X + obstacleWidth / 2.0f;
-    float obstacleMinY = obstacleCenter.Y - obstacleHeight / 2.0f;
-    float obstacleMaxY = obstacleCenter.Y + obstacleHeight / 2.0f;
-
-    glBegin(GL_LINE_LOOP);
-    glColor3f(1.0f, 1.0f, 1.0f);
-    glVertex2f(obstacleMinX, obstacleMinY);
-    glVertex2f(obstacleMaxX, obstacleMinY);
-    glVertex2f(obstacleMaxX, obstacleMaxY);
-    glVertex2f(obstacleMinX, obstacleMaxY);
-    glEnd();
-
-    for (int i = 0; i < positions.size(); i++) {
-        // Check collision with the bounding box
-        if (positions[i].X < minX + horizontalFactor) {
-            positions[i].X = minX + horizontalFactor;
-            velocities[i].X *= -dampingFactor;
+        // Boundary collisions
+        if (pos.X < minX) {
+            pos.X = minX;
+            vel.X *= -dampingFactor;
         }
-        else if (positions[i].X > maxX - horizontalFactor) {
-            positions[i].X = maxX - horizontalFactor;
-            velocities[i].X *= -dampingFactor;
+        else if (pos.X > maxX) {
+            pos.X = maxX;
+            vel.X *= -dampingFactor;
         }
 
-        if (positions[i].Y < minY + verticalFactor) {
-            positions[i].Y = minY + verticalFactor;
-            velocities[i].Y *= -dampingFactor;
+        if (pos.Y < minY) {
+            pos.Y = minY;
+            vel.Y *= -dampingFactor;
         }
-        else if (positions[i].Y > maxY - verticalFactor) {
-            positions[i].Y = maxY - verticalFactor;
-            velocities[i].Y *= -dampingFactor;
+        else if (pos.Y > maxY) {
+            pos.Y = maxY;
+            vel.Y *= -dampingFactor;
         }
-
-        // Check collision with the obstacle
-        if (positions[i].X - radius < obstacleMaxX && positions[i].X + radius > obstacleMinX &&
-            positions[i].Y - radius < obstacleMaxY && positions[i].Y + radius > obstacleMinY) {
-            // Determine which side of the obstacle the particle is closest to and adjust accordingly
-            float distToLeft = std::abs(positions[i].X - radius - obstacleMinX);
-            float distToRight = std::abs(positions[i].X + radius - obstacleMaxX);
-            float distToTop = std::abs(positions[i].Y + radius - obstacleMaxY);
-            float distToBottom = std::abs(positions[i].Y - radius - obstacleMinY);
-
-            // Resolve the collision with the nearest boundary of the obstacle
-            if (distToLeft < distToRight && distToLeft < distToTop && distToLeft < distToBottom) {
-                positions[i].X = obstacleMinX - radius;
-                velocities[i].X *= -dampingFactor;
-            }
-            else if (distToRight < distToLeft && distToRight < distToTop && distToRight < distToBottom) {
-                positions[i].X = obstacleMaxX + radius;
-                velocities[i].X *= -dampingFactor;
-            }
-            else if (distToTop < distToLeft && distToTop < distToRight && distToTop < distToBottom) {
-                positions[i].Y = obstacleMaxY + radius;
-                velocities[i].Y *= -dampingFactor;
-            }
-            else if (distToBottom < distToLeft && distToBottom < distToRight && distToBottom < distToTop) {
-                positions[i].Y = obstacleMinY - radius;
-                velocities[i].Y *= -dampingFactor;
-            }
-        }
-
         
+        // Obstacle collisions
+        for (const auto& obstacle : obstacles) {
+            float obstacleMinX = obstacle.center.X - obstacle.width / 2;
+            float obstacleMaxX = obstacle.center.X + obstacle.width / 2;
+            float obstacleMinY = obstacle.center.Y - obstacle.height / 2;
+            float obstacleMaxY = obstacle.center.Y + obstacle.height / 2;
+
+            if (pos.X - radius < obstacleMaxX && pos.X + radius > obstacleMinX &&
+                pos.Y - radius < obstacleMaxY && pos.Y + radius > obstacleMinY) {
+                // Determine which side of the obstacle the particle is closest to and adjust accordingly
+                float distToLeft = std::abs(positions[i].X - radius - obstacleMinX);
+                float distToRight = std::abs(positions[i].X + radius - obstacleMaxX);
+                float distToTop = std::abs(positions[i].Y + radius - obstacleMaxY);
+                float distToBottom = std::abs(positions[i].Y - radius - obstacleMinY);
+
+                // Resolve the collision with the nearest boundary of the obstacle
+                if (distToLeft < distToRight && distToLeft < distToTop && distToLeft < distToBottom) {
+                    positions[i].X = obstacleMinX - radius;
+                    velocities[i].X *= -dampingFactor;
+                }
+                else if (distToRight < distToLeft && distToRight < distToTop && distToRight < distToBottom) {
+                    positions[i].X = obstacleMaxX + radius;
+                    velocities[i].X *= -dampingFactor;
+                }
+                else if (distToTop < distToLeft && distToTop < distToRight && distToTop < distToBottom) {
+                    positions[i].Y = obstacleMaxY + radius;
+                    velocities[i].Y *= -dampingFactor;
+                }
+                else if (distToBottom < distToLeft && distToBottom < distToRight && distToBottom < distToTop) {
+                    positions[i].Y = obstacleMinY - radius;
+                    velocities[i].Y *= -dampingFactor;
+                }
+            }
+            drawObstacles();
+        }
     }
 }
 
@@ -893,7 +904,7 @@ int main(void)
     std::vector<bool> isParticleLost(balls.size(), false);
     std::vector<std::vector<int>> particleIndices(positions.size());
     densities.resize(positions.size());
-
+    
     std::cout << "Entering window loop" << std::endl;
     while (!glfwWindowShouldClose(window))
     {
@@ -964,14 +975,11 @@ int main(void)
         //        isParticleLost[i] = true; // This particle is now counted as lost
         //    }
         //}
+       
+        resolveCollisions(positions, velocities, radius, dampingFactor, boundsSizeX, boundsSizeY);
 
-        // Define obstacle properties
+        drawObstacles();
         
-        // Resolve collisions with the bounding box and obstacle
-        resolveCollisions(positions, velocities, radius, dampingFactor, boundsSizeX, boundsSizeY, obstacleCenter, obstacleWidth, obstacleHeight);
-
-        // ...
-
         for (const Ball& ball : balls) {
             ball.draw();
         }
@@ -995,16 +1003,43 @@ int main(void)
             ImGui::SliderFloat("Mouse Radius", &mouseRadius, 10.0f, 200.0f);
             ImGui::SliderFloat("Mouse Strength", &mouseStrength, 0.1f, 2.0f);
             ImGui::SliderFloat("Viscosity Strength", &viscosityStrength, 0.1f, 20.0f);
-            ImGui::SliderFloat2("Obstacle Center", &obstacleCenter.X, 0.0f, boundsSizeX);
-            ImGui::SliderFloat("Obstacle Width", &obstacleWidth, 10.0f, boundsSizeX);
-            ImGui::SliderFloat("Obstacle Height", &obstacleHeight, 10.0f, boundsSizeY);
+            ImGui::Checkbox("Obstacle Editor", &show_obstacle_editor);
+            ImGui::SameLine();
+            ImGui::Checkbox("Enable Interaction", &enableInteraction);
+            if (show_obstacle_editor)
+            {
+                ImGui::Begin("Obstacle Editor", &show_obstacle_editor);   
+                if (ImGui::Button("Add New Obstacle")) {
+                    obstacles.push_back(Obstacle{ Vector2(400, 300), 100, 50 });
+                }
+                ImGui::Text("Default Obstacle");
+                for (int i = 0; i < obstacles.size(); i++) {
+                    ImGui::PushID(i);
+                    ImGui::Text("Obstacle %d", i + 2);
+                    ImGui::Text("Obstacle Center");
+                    ImGui::SliderFloat2("Center", &obstacles[i].center.X, 0.0f, boundsSizeX);
+                    ImGui::SliderFloat("Width", &obstacles[i].width, 10.0f, boundsSizeX);
+                    ImGui::SliderFloat("Height", &obstacles[i].height, 10.0f, boundsSizeY);
+                    if (ImGui::Button("Remove")) {
+                        obstacles.erase(obstacles.begin() + i);
+                        ImGui::PopID();
+                        continue;
+                    }
+                    ImGui::PopID();
+                }
+
+                if (ImGui::Button("Close"))
+                    show_obstacle_editor = false;
+                ImGui::End();
+            }
             ImGui::Checkbox("Show Smoothing Radius", &show_smoothing_radius);
             ImGui::SameLine();
             ImGui::Checkbox("Show Directional Lines", &show_directional_lines);
             ImGui::Checkbox("Show Density Areas", &show_density_areas);
             ImGui::SameLine();
             ImGui::Checkbox("Show Spatial Grid", &show_spatial_grid);
-            ImGui::Checkbox("Enable Interaction", &enableInteraction);
+            ImGui::SameLine();
+            ImGui::Checkbox("Default Obstacle", &show_default_obstacle);
 
             //ImGui::Text("Lost Particles: %d", lostParticles);
             if (ImGui::Button("Reset to Grid")) {
@@ -1027,6 +1062,7 @@ int main(void)
             if (show_smoothing_radius) drawBounds(smoothingRadius);
             if (show_directional_lines) show_directional_lines = true;
             if (enableInteraction) enableInteraction = true;
+            //if (show_default_obstacle) drawDefaultObstacle();
             if (show_density_areas) { drawDensityAreas(densities, targetDensity); show_density_areas = true; }
         }
         if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) {
