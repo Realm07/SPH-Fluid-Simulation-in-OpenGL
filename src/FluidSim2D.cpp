@@ -24,7 +24,7 @@
 
 constexpr float M_PI = 3.14;
 constexpr GLfloat twicePi = 2.0f * M_PI;
-int SCREEN_WIDTH = 1900;
+int SCREEN_WIDTH = 1850;
 int SCREEN_HEIGHT = 1000;
 
 int rows = 50;
@@ -32,11 +32,11 @@ int cols = rows;
 int radius = 3;
 constexpr int spacingX = 9;
 constexpr int spacingY = spacingX;
-float smoothingRadius = 66.0f;
-float gravity = 0.000f;
+float smoothingRadius = 72.0f;
+float gravity = 0.2f;
 constexpr float dampingFactor = 0.8f;
-float targetDensity = 0.0003f;
-float pressureMultiplier = 75.0f;
+float targetDensity = 0.0033f;
+float pressureMultiplier = 350.0f;
 float stiffnessConstant = 1.0f;
 float boundsSizeX = SCREEN_WIDTH;
 float horizontalFactor = 0;
@@ -49,8 +49,8 @@ float mouseStrength = 0.5f;
 float sqrSmoothingRadius = smoothingRadius * smoothingRadius;
 float lastFrame = 0.0f;
 double mouseX, mouseY;
-float nearPressureMultiplier = 6.0f;
-const float mass = 0.1f;
+float nearPressureMultiplier = 14.0f;
+const float mass = 1.0f;
 
 //window
 int lostParticles = 0;
@@ -1015,7 +1015,7 @@ int main(void)
             ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
             ImGui::SliderFloat("Pressure Multiplier", &pressureMultiplier, 50.0f, 1000.0f);
             //ImGui::SliderFloat("Multiplicative Factor", &multiplicativeFactor, 1.0f, 100.0f);
-            ImGui::SliderFloat("Target Density", &targetDensity, 0.00000001f, 0.001f, "%.8f");
+            ImGui::SliderFloat("Target Density", &targetDensity, 0.00000001f, 0.01f, "%.8f");
             ImGui::SliderFloat("Mouse Radius", &mouseRadius, 10.0f, 200.0f);
             ImGui::SliderFloat("Mouse Strength", &mouseStrength, 0.1f, 2.0f);
             ImGui::SliderFloat("Viscosity Strength", &viscosityStrength, 0.1f, 20.0f);
@@ -1101,81 +1101,3 @@ int main(void)
 
     return 0;
 }
-
-//{
-//    Vector2 mousePosition(static_cast<float>(mouseX), static_cast<float>(-mouseY + SCREEN_HEIGHT));
-//    if (show_mouse == true) {
-//        drawOutline(mousePosition, mouseRadius);
-//    }
-//
-//    for (int i = 0; i < balls.size(); i++) {
-//        velocities[i] += Vector2::down() * gravity;
-//        predictedPositions[i] = positions[i] + velocities[i];
-//    }
-//
-//    UpdateSpatialLookup(predictedPositions, smoothingRadius, spatialLookup, startIndices);
-//
-//    float density = CalculateDensity(positions, smoothingRadius);
-//    for (int i = 0; i < positions.size(); ++i) {
-//        particleIndices[i] = ForEachPointWithinRadius(predictedPositions[i], smoothingRadius, spatialLookup, startIndices, predictedPositions);
-//    }
-//
-//    for (int i = 0; i < positions.size(); ++i) {
-//        densities[i] = CalculateDensity(i, particleIndices[i], predictedPositions, smoothingRadius);
-//    }
-//
-//    /*for (int i = 0; i < positions.size(); ++i) {
-//
-//        Vector2 pressureForce = CalculatePressureForce(i, particleIndices[i], predictedPositions, densities, smoothingRadius);
-//        Vector2 pressureAcceleration = pressureForce / densities[i];
-//        velocities[i] += pressureAcceleration;
-//    }*/
-//
-//    std::for_each(std::execution::par, positions.begin(), positions.end(), [&](const auto& position) {
-//        int i = &position - &positions[0];
-//        Vector2 pressureForce = CalculatePressureForce(i, particleIndices[i], predictedPositions, densities, smoothingRadius);
-//        Vector2 pressureAcceleration = pressureForce / densities[i];
-//        velocities[i] += pressureAcceleration;
-//        });
-//
-//    for (int i = 0; i < positions.size(); ++i) {
-//
-//        Vector2 viscosityForce = CalculateViscosityForce(i, particleIndices[i], predictedPositions, velocities, smoothingRadius, viscosityStrength);
-//        velocities[i] += viscosityForce;
-//    }
-//
-//    int mouseButton = -1;
-//    if (enableInteraction == true)
-//    {
-//        if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
-//            mouseButton = GLFW_MOUSE_BUTTON_LEFT;
-//        }
-//        else if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
-//            mouseButton = GLFW_MOUSE_BUTTON_RIGHT;
-//        }
-//    }
-//
-//    for (int i = 0; i < balls.size(); i++) {
-//        float density = std::max(densities[i], 1.0f); // Clamp density to a minimum value of 0.01
-//        Vector2 interactionForce = InteractionForce(mousePosition, mouseRadius, mouseStrength, i, predictedPositions, mouseButton);
-//        velocities[i] += interactionForce / density;
-//    }
-//
-//    for (int i = 0; i < balls.size(); i++) {
-//        positions[i] += velocities[i];
-//        balls[i].position = positions[i];
-//        balls[i].velocity = velocities[i]; // Update the velocity of each Ball object
-//    }
-//    //for (int i = 0; i < balls.size(); i++) {
-//    //    if (!isParticleLost[i] && (std::isnan(velocities[i].X) || std::isnan(velocities[i].Y))) {
-//    //        lostParticles++;
-//    //        isParticleLost[i] = true; // This particle is now counted as lost
-//    //    }
-//    //}
-//
-//    resolveCollisions(positions, velocities, radius, dampingFactor, boundsSizeX, boundsSizeY);
-//
-//    for (const Ball& ball : balls) {
-//        ball.draw();
-//    }
-//}

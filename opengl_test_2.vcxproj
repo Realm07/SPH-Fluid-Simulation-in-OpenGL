@@ -24,6 +24,7 @@
     <ProjectGuid>{d55f6646-92d1-4295-8fa4-3b044f8b2e0b}</ProjectGuid>
     <RootNamespace>opengltest2</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ProjectName>FluidSimulation2D</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
