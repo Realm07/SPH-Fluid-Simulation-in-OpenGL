@@ -1,55 +1,47 @@
-#include <GL/glew.h>
+#include <GL/glew.h> //rendering, includes opengl.lib:
 #include <GLFW/glfw3.h>
-#include <iostream>
+#include <imgui.h> //for config UI/debugging purposes:
+#include <imgui_impl_glfw.h> 
+#include <imgui_impl_opengl3.h> 
+#include <iostream> //Standard libaries:
+#include <random>
 #include <cmath>
 #include <vector>
-//#include <sstream>
-#include <random>
-//#include <chrono>
-#include <iomanip>
-#include <imgui.h>
-//#include <omp.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_opengl3.h>
 #include <cmath>
-//#include <tuple>
-//#include <algorithm>
 #include <limits>
-//#include <utility>
-//#include <cstdint>
 #include <array>
-//#include <unordered_set>
 #include <set>
 #include <execution>
 
 constexpr float M_PI = 3.14;
 constexpr GLfloat twicePi = 2.0f * M_PI;
-int SCREEN_WIDTH = 1850;
-int SCREEN_HEIGHT = 1000;
+int SCREEN_WIDTH = 1920;
+int SCREEN_HEIGHT = 970;
 
-int rows = 50;
-int cols = rows;
+//Parameters
+int rows = 50; //number of particles = rows * rows. 2500 here. time complexity of application is O(mn) 
+int cols = rows; //[due to optimized spatial grid approach) where m is average particle per grid cell and n is number of total particles 
 int radius = 3;
 constexpr int spacingX = 9;
 constexpr int spacingY = spacingX;
-float smoothingRadius = 72.0f;
-float gravity = 0.2f;
-constexpr float dampingFactor = 0.8f;
-float targetDensity = 0.0033f;
-float pressureMultiplier = 350.0f;
-float stiffnessConstant = 1.0f;
+float smoothingRadius = 72.0f;  //Influence radius of each particle. Values less than 60 ensue chaos, higher values increase density
+float gravity = 0.2f; 
+constexpr float dampingFactor = 0.8f; //Damping of particle when colliding with boundary
+float targetDensity = 0.0033f; //Density that the fluid attains at rest. 0 for gas (remember to set gravity to 0 too). 0.003 for liquid
+float pressureMultiplier = 350.0f; //How fast the particles react to change
+float stiffnessConstant = 1.0f; 
 float boundsSizeX = SCREEN_WIDTH;
 float horizontalFactor = 0;
 float verticalFactor = 0;
 float boundsSizeY = SCREEN_HEIGHT;
-float mouseRadius = 100;
+float mouseRadius = 150;
 constexpr GLint numberOfSides = 8;
-float viscosityStrength = 15.0f;
-float mouseStrength = 0.5f;
+float viscosityStrength = 10.0f; //when interacting, some particles get thrown into the other particles, this value brings that particle to a stop. visa versa too, the particle experiences the same acceleration as neighbouring particles. keep at low value for stablization
+float mouseStrength = 2.0f; //strength of mouse interaction
 float sqrSmoothingRadius = smoothingRadius * smoothingRadius;
 float lastFrame = 0.0f;
 double mouseX, mouseY;
-float nearPressureMultiplier = 14.0f;
+float nearPressureMultiplier = 14.0f; //surface tension of sorts. particles collapse on low and negative values
 const float mass = 1.0f;
 
 //window
@@ -66,10 +58,11 @@ bool show_smoothing_radius = false;
 bool show_directional_lines = false;
 bool show_density_areas = false;
 bool show_spatial_grid = false;
+bool show_density_gradient = false;
 bool reset_to_random = true;
 bool reset_to_grid = false;
 bool show_mouse = true;
-bool enableInteraction = false;
+bool enableInteraction = true;
 bool show_default_obstacle = false;
 
 //Math
@@ -667,7 +660,7 @@ static inline void DrawDirectionalLine(const Vector2& startPos, const Vector2& e
     glEnd();
 }
 
-//Optimized Particle Lookup
+//Optimized Particle Lookup Helper Functions
 static inline std::pair<float, float> PositionToCellCoord(const std::pair<float, float>& point, float radius) {
     //Convert a position to the coordinate of the cell it is within
     float cellX = static_cast<float>(point.first / radius);
@@ -698,14 +691,14 @@ static struct Entry {
 
 // Forward declaration
 static inline void DrawGridCellOutlines(const std::vector<Entry>& spatialLookup, float cellSize);
+//Optimized Particle Lookup cont.
 static inline void RadixSort(std::vector<Entry>& spatialLookup) {
     const int numBits = 8;
     const int numBuckets = 1 << numBits;
-    const int numPasses = sizeof(uint32_t) * 8 / numBits;
-
-    std::vector<Entry> temp(spatialLookup.size());
-    std::vector<int> count(numBuckets);
-
+    const int numPasses = sizeof(uint32_t) * 8 / numBits;         //This specific sort is picked up from online, UpdateSpatialLookup used
+    std::vector<Entry> temp(spatialLookup.size());               // quicksort earlier but apparently radix sort is faster on large datasets like these
+    std::vector<int> count(numBuckets);                         // so I changed the code from quicksort to radix a few hours before the deadlines
+                                                               // i.e. Implement now, configure later approach.
     for (int pass = 0; pass < numPasses; ++pass) {
         int shift = pass * numBits;
         int mask = numBuckets - 1;
@@ -885,7 +878,7 @@ int main(void)
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
 
-    //glfwSwapInterval(1);
+    //glfwSwapInterval(1);  //Vsync
 
     std::vector<Vector2> positions;
     std::vector<Vector2> predictedPositions;
@@ -917,7 +910,7 @@ int main(void)
     std::vector<std::vector<int>> particleIndices(positions.size());
     densities.resize(positions.size());
     
-    std::cout << "Entering window loop" << std::endl;
+    std::cout << "Entering window loop" << std::endl; //Main update loop
     while (!glfwWindowShouldClose(window))
     {
         glClear(GL_COLOR_BUFFER_BIT);
@@ -934,7 +927,7 @@ int main(void)
         }
         UpdateSpatialLookup(predictedPositions, smoothingRadius, spatialLookup, startIndices);
 
-        //float density = CalculateDensity(positions, smoothingRadius);
+        float density = CalculateDensity(positions, smoothingRadius);
         for (size_t i = 0; i < positions.size(); ++i) {
             particleIndices[i] = ForEachPointWithinRadius(predictedPositions[i], smoothingRadius, spatialLookup, startIndices, predictedPositions);
         }
@@ -991,25 +984,17 @@ int main(void)
         for (const Ball& ball : balls) {
             ball.draw();
         }
-        //DrawDensityGradients(positions, smoothingRadius);
-        if (show_directional_lines) {
-            for (size_t i = 0; i < positions.size(); ++i) {
-                for (int otherParticleIndex : particleIndices[i]) {
-                    if (i != otherParticleIndex) {
-                        DrawDirectionalLine(positions[i], positions[otherParticleIndex]);
-                    }
-                }
-            }
-        }
+        
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         {
             static int ballRadius = radius;
             ImGui::Begin("Config");
+            ImGui::Text("Remember to turn on obstacle editor and try it!");
             ImGui::SliderFloat("Gravity", &gravity, 0.0f, 0.2f);
             ImGui::SliderInt("Ball Radius", &ballRadius, 1, 70);
-            //ImGui::Text("Density: %.8f", density);
+            ImGui::Text("Density at screen center: %.8f", density);
             ImGui::SliderFloat("Smoothing Radius", &smoothingRadius, 30.0f, 200.0f);
             //ImGui::SliderInt("Spacing X", &spacingX, 0.0, 150.0);
             ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
@@ -1017,22 +1002,23 @@ int main(void)
             //ImGui::SliderFloat("Multiplicative Factor", &multiplicativeFactor, 1.0f, 100.0f);
             ImGui::SliderFloat("Target Density", &targetDensity, 0.00000001f, 0.01f, "%.8f");
             ImGui::SliderFloat("Mouse Radius", &mouseRadius, 10.0f, 200.0f);
-            ImGui::SliderFloat("Mouse Strength", &mouseStrength, 0.1f, 2.0f);
+            ImGui::SliderFloat("Mouse Strength", &mouseStrength, 0.1f, 5.0f);
             ImGui::SliderFloat("Viscosity Strength", &viscosityStrength, 0.1f, 20.0f);
             ImGui::SliderFloat("Near Pressure Mult", &nearPressureMultiplier, -20.0f, 20.0f);
+            ImGui::Text("Remember to turn on obstacle editor and try it!");
             ImGui::Checkbox("Obstacle Editor", &show_obstacle_editor);
             ImGui::SameLine();
             ImGui::Checkbox("Enable Interaction", &enableInteraction);
             if (show_obstacle_editor)
             {
-                ImGui::Begin("Obstacle Editor", &show_obstacle_editor);   
+                ImGui::Begin("Obstacle Editor", &show_obstacle_editor);
                 if (ImGui::Button("Add New Obstacle")) {
                     obstacles.push_back(Obstacle{ Vector2(400, 300), 100, 50 });
                 }
-                ImGui::Text("Default Obstacle");
+                ImGui::Text("Resize this window for better visibility");
                 for (int i = 0; i < obstacles.size(); i++) {
                     ImGui::PushID(i);
-                    ImGui::Text("Obstacle %d", i + 2);
+                    ImGui::Text("Obstacle %d", i + 1);
                     ImGui::Text("Obstacle Center");
                     ImGui::SliderFloat2("Center", &obstacles[i].center.X, 0.0f, boundsSizeX);
                     ImGui::SliderFloat("Width", &obstacles[i].width, 10.0f, boundsSizeX);
@@ -1055,7 +1041,7 @@ int main(void)
             ImGui::Checkbox("Show Density Areas", &show_density_areas);
             ImGui::SameLine();
             ImGui::Checkbox("Show Spatial Grid", &show_spatial_grid);
-
+            ImGui::Checkbox("Show Density Gradient", &show_density_gradient);
             //ImGui::Text("Lost Particles: %d", lostParticles);
             if (ImGui::Button("Reset to Grid")) {
                 reset_to_grid = true;
@@ -1083,6 +1069,9 @@ int main(void)
                     [](const std::pair<float, float>& pair) { return pair.first; });
                 drawDensityAreas(densityValues, targetDensity);
                 show_density_areas = true;
+            }
+            if (show_density_gradient) {
+                DrawDensityGradients(positions, smoothingRadius);
             }
         }
         if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) {
