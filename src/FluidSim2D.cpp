@@ -1,3 +1,9 @@
+// SPH Fluid Simulation in OpenGL
+// Copyright (c) [2025] [Realm07]
+//
+// This software is released under the MIT License.
+// See the LICENSE file for details.
+
 #include <GL/glew.h> //rendering, includes opengl.lib:
 #include <GLFW/glfw3.h>
 #include <imgui.h> //for config UI/debugging purposes:
